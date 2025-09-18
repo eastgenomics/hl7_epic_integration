@@ -1,6 +1,8 @@
 from datetime import datetime
 from pathlib import Path
 
+
+import FastAPI
 import asyncio
 
 from hl7apy.core import Message
@@ -12,6 +14,9 @@ from hl7apy.core import Message
 # define host and port to listen to
 TCP_HOST = "0.0.0.0"
 TCP_PORT = 20480
+
+# Create the fastapi instance
+app = FastAPI()
 
 # ensure output dir for responses exists
 response_dir = Path('/appdata/epic_hl7_dev/responses/')
@@ -77,7 +82,6 @@ def ack_message_back(original_message: str) -> str:
     try:
        
         msg = parse_message(original_message)
-
         
         ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
 
@@ -100,6 +104,41 @@ def ack_message_back(original_message: str) -> str:
 
     except Exception as e:
         print(f"Error generating ACK: {e}")
+        return None
+    
+def create_error_ack(original_message: str) -> str:
+    """
+    Create an HL7 error ACK message for invalid messages
+    
+    Parameters
+    ----------
+    original_message : str
+        Original HL7 message that failed validation
+        
+    Returns
+    -------
+    str
+        HL7 error ACK message in ER7 format
+    """
+
+    try:
+        
+        ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
+        
+        # Populate MSH segment
+        ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
+        ack.msh.msh_9 = 'ACK'
+        ack.msh.msh_10 = 'ERR' + datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        # Create error acknowledgment
+        ack.add_segment("MSA")
+        ack.msa.msa_1 = "AE"
+        ack.msa.msa_3 = "Message validation failed: missing required segments"
+        
+        return ack.to_er7()
+        
+    except Exception as e:
+        print(f"Error generating error ACK: {e}")
         return None
     
 
@@ -147,7 +186,12 @@ async def handle_tcp_connection(
                 writer.write(ack_hl7.encode())
                 await writer.drain()
         else:
+
             print("Invalid HL7 message: missing required segments")
+            error_ack = create_error_ack(message)
+            if error_ack:
+                writer.write(error_ack.encode())
+                await writer.drain()
 
         write_to_file(data=message)
 
