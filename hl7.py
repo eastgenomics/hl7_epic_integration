@@ -1,13 +1,21 @@
 from datetime import datetime
 from pathlib import Path
-
 from fastapi import FastAPI
 import asyncio
+from hl7apy.core import Message
+from hl7apy.parser import parse_message
+from hl7apy.core import Message
+from hl7apy.consts import VALIDATION_LEVEL
+from hl7apy.core import Message
+from contextlib import asynccontextmanager
 
-app = FastAPI()
 
+# define host and port to listen to
 TCP_HOST = "0.0.0.0"
 TCP_PORT = 20480
+
+# Create the fastapi instance
+app = FastAPI()
 
 # ensure output dir for responses exists
 response_dir = Path('/appdata/epic_hl7_dev/responses/')
@@ -15,6 +23,15 @@ response_dir.mkdir(parents=True, exist_ok=True)
 
 
 def write_to_file(data: str):
+    """
+    Save a hl7 message received into a txt file
+
+    Parameters
+    ----------
+    data : string
+        hl7 message received
+    """
+    
     filename = str(datetime.now().date()) + '_' + str(datetime.now().time()).replace(':', '-')
     
     with open(str(response_dir) + f'/{filename}.txt', "w+") as f:
@@ -22,10 +39,136 @@ def write_to_file(data: str):
         f.write(data)
 
 
+def validate_message(data: str) -> bool:
+    """
+    Validate a hl7 message received by checking it has the required segments
+
+    Parameters
+    ----------
+    data : string
+        hl7 message received
+
+    Returns
+    -------
+    bool: 
+        merged dataframe
+    """
+       
+    try:
+        m = parse_message(data, find_groups=False)
+        required_segments = {'MSH', 'PID'}
+        present_segments = {segment.name for segment in m.children}
+        return required_segments.issubset(present_segments)
+    except Exception:
+        return False
+            
+
+def ack_message_back(original_message: str):
+    """
+    Create an hl7 message as an ACK from the original hl7 message received 
+
+    Parameters
+    ----------
+    original_message : string
+        hl7 message received
+
+    Returns
+    -------
+    str:
+        HL7 ACK message in ER7 format
+    """
+       
+    try:
+       
+        msg = parse_message(original_message)
+        
+        ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
+
+        # Populate the MSH segment
+        ack.msh.msh_3 = msg.msh.msh_5.value  # Swap sender/receiver
+        ack.msh.msh_4 = msg.msh.msh_6.value
+        ack.msh.msh_5 = msg.msh.msh_3.value
+        ack.msh.msh_6 = msg.msh.msh_4.value
+        ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
+        ack.msh.msh_9 = 'ACK'
+        ack.msh.msh_10 = 'ACK12345'
+
+        # Create acknowledgment 
+        ack.add_segment("MSA")
+        ack.msa.msa_1 = "AA"
+        ack.msa.msa_2 = msg.msh.msh_10.value
+
+        # Return the encoded ACK string
+        return ack.to_er7()
+
+    except Exception as e:
+        print(f"Error generating ACK: {e}")
+        return None
+    
+def create_error_ack(original_message: str):
+    """
+    Create an HL7 error ACK message for invalid messages
+    
+    Parameters
+    ----------
+    original_message : str
+        Original HL7 message that failed validation
+        
+    Returns
+    -------
+    str
+        HL7 error ACK message in ER7 format
+    """
+
+    try:
+
+        msg = parse_message(original_message)
+        
+        ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
+        
+        # Populate MSH segment
+        ack.msh.msh_3 = msg.msh.msh_5.value  # Swap sender/receiver
+        ack.msh.msh_4 = msg.msh.msh_6.value
+        ack.msh.msh_5 = msg.msh.msh_3.value
+        ack.msh.msh_6 = msg.msh.msh_4.value
+        ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
+        ack.msh.msh_9 = 'ACK'
+        ack.msh.msh_10 = 'ERR' + datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        # Create error acknowledgment
+        ack.add_segment("MSA")
+        ack.msa.msa_1 = "AE"
+        ack.msa.msa_3 = "Message validation failed: missing required segments"
+        
+        return ack.to_er7()
+        
+    except Exception as e:
+        print(f"Error generating error ACK: {e}")
+        return None
+    
+
 async def handle_tcp_connection(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter
 ):
+ 
+    """
+    Handles an incoming TCP connection and processes HL7 messages.
+
+    Reads data from the client over TCP.
+    Validates the HL7 message.
+    Sends back an HL7 ACK message if the input is valid.
+    Logs invalid messages and saves all incoming messages to file.
+
+    Parameters
+    ----------
+    reader : asyncio.StreamReader
+        Stream reader for the TCP connection.
+
+    writer : asyncio.StreamWriter
+        Stream writer for the TCP connection.
+    """
+
     addr = writer.get_extra_info("peername")
     print(f"Connection from {addr}")
 
@@ -39,18 +182,31 @@ async def handle_tcp_connection(
 
         print(f"Received data: {message}")
 
-        write_to_file(data=message)
+                
+        if validate_message(message):
+            print("HL7 message is valid")
+            ack_hl7 = ack_message_back(message)
 
-        # Echo back (optional)
-        writer.write(data)
-        await writer.drain()
+            if ack_hl7:
+                writer.write(ack_hl7.encode())
+                await writer.drain()
+        else:
+
+            print("Invalid HL7 message: missing required segments")
+            error_ack = create_error_ack(message)
+            if error_ack:
+                writer.write(error_ack.encode())
+                await writer.drain()
+
+        write_to_file(data=message)
 
     print(f"Connection closed from {addr}")
     writer.close()
     await writer.wait_closed()
 
-
+# Start the TCP server to listen for incoming HL7 messages.
 async def start_tcp_server():
+
     server = await asyncio.start_server(
         handle_tcp_connection,
         host=TCP_HOST,
@@ -60,12 +216,30 @@ async def start_tcp_server():
     async with server:
         await server.serve_forever()
 
+# Set a task to make the server run continuously
+@asynccontextmanager
+async def lifespan():
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(start_tcp_server())
+    task = asyncio.create_task(start_tcp_server())
+    
+    yield
 
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("TCP server not running")
 
+# Assign the lifespan context manager - no decorator yet. Otherwise FastAPI won't run it
+app.router.lifespan_context = lifespan
+
+# Endpoint for HTTP connection
 @app.get("/")
-async def read_root():
+async def read_root() -> dict:
+    """
+    Returns
+    -------
+    dict:
+        message with the server status
+    """
+
     return {"message": "HTTP server is running alongside TCP listener"}
