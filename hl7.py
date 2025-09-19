@@ -1,15 +1,14 @@
 from datetime import datetime
 from pathlib import Path
-
-
-import FastAPI
+from fastapi import FastAPI
 import asyncio
-
 from hl7apy.core import Message
 from hl7apy.parser import parse_message
 from hl7apy.core import Message
 from hl7apy.consts import VALIDATION_LEVEL
 from hl7apy.core import Message
+from contextlib import asynccontextmanager
+
 
 # define host and port to listen to
 TCP_HOST = "0.0.0.0"
@@ -64,7 +63,7 @@ def validate_message(data: str) -> bool:
         return False
             
 
-def ack_message_back(original_message: str) -> str:
+def ack_message_back(original_message: str):
     """
     Create an hl7 message as an ACK from the original hl7 message received 
 
@@ -106,7 +105,7 @@ def ack_message_back(original_message: str) -> str:
         print(f"Error generating ACK: {e}")
         return None
     
-def create_error_ack(original_message: str) -> str:
+def create_error_ack(original_message: str):
     """
     Create an HL7 error ACK message for invalid messages
     
@@ -122,10 +121,16 @@ def create_error_ack(original_message: str) -> str:
     """
 
     try:
+
+        msg = parse_message(original_message)
         
         ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
         
         # Populate MSH segment
+        ack.msh.msh_3 = msg.msh.msh_5.value  # Swap sender/receiver
+        ack.msh.msh_4 = msg.msh.msh_6.value
+        ack.msh.msh_5 = msg.msh.msh_3.value
+        ack.msh.msh_6 = msg.msh.msh_4.value
         ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
         ack.msh.msh_9 = 'ACK'
         ack.msh.msh_10 = 'ERR' + datetime.now().strftime("%Y%m%d%H%M%S")
@@ -211,14 +216,21 @@ async def start_tcp_server():
     async with server:
         await server.serve_forever()
 
-# Set the function run automatically when the application starts
-@app.on_event("startup")
-async def startup_event():
-    """
-    Schedule a routine task (start the server)
-    """
-    asyncio.create_task(start_tcp_server())
+# Set a task to make the server run continuously
+@asynccontextmanager
+async def lifespan():
 
+    task = asyncio.create_task(start_tcp_server())
+    
+    yield
+
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("TCP server not running")
+
+# Assign the lifespan context manager - no decorator yet. Otherwise FastAPI won't run it
+app.router.lifespan_context = lifespan
 
 # Endpoint for HTTP connection
 @app.get("/")
