@@ -255,7 +255,7 @@ async def lifespan(app: FastAPI):
 
     try:
         await task
-    except asyncio.CancelledError: 
+    except asyncio.CancelledError:
         print("TCP server not running")
 
 app = FastAPI(lifespan=lifespan)
