@@ -24,7 +24,7 @@ response_dir = "./responses_dev"
 
 def remove_mllp_framing_bytes(data: bytes) -> str:
     """
-    Adds of removes MLLP protocol framing start and end bytes from
+    Adds or removes MLLP protocol framing start and end bytes from
     an HL7 message and decodes it
 
     Parameters
@@ -247,7 +247,7 @@ async def start_tcp_server():
 
 # FastAPI app and TCP server running together
 @asynccontextmanager
-async def lifespan():
+async def lifespan(app: FastAPI):
 
     task = asyncio.create_task(start_tcp_server())
     
@@ -255,7 +255,7 @@ async def lifespan():
 
     try:
         await task
-    except asyncio.CancelledError:
+    except asyncio.CancelledError: 
         print("TCP server not running")
 
 app = FastAPI(lifespan=lifespan)
