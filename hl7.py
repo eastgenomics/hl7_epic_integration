@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI
+import os
 import asyncio
 from hl7apy.core import Message
 from hl7apy.parser import parse_message
@@ -10,16 +11,42 @@ from hl7apy.core import Message
 from contextlib import asynccontextmanager
 
 
-# define host and port to listen to
+# TCP server configuration (port to listen to)
 TCP_HOST = "0.0.0.0"
 TCP_PORT = 20480
 
-# Create the fastapi instance
-app = FastAPI()
+# MLLP framing characters 
+MLLP_START = b'\x0b'
+MLLP_END = b'\x1c\r'
 
-# ensure output dir for responses exists
-response_dir = Path('/appdata/epic_hl7_dev/responses/')
-response_dir.mkdir(parents=True, exist_ok=True)
+# Directory to store HL7 messages
+response_dir = "./responses_dev"
+
+def remove_mllp_framing_bytes(data: bytes) -> str:
+    """
+    Adds or removes MLLP protocol framing start and end bytes from
+    an HL7 message and decodes it
+
+    Parameters
+    ----------
+    data : bytes
+        hl7 message received with framing bytes
+
+    Returns
+    ---------
+    string:
+          stripped hl7 message and decoded
+    """
+    if data.startswith(MLLP_START) and data.endswith(MLLP_END):
+        data = data[1:-2]
+    message = data.decode('utf-8')
+    return  message.replace('\n','\r')
+
+def wrap_with_mllp(message: str) -> bytes:
+    """
+    Wraps an HL7 message string with MLLP framing and returns as bytes
+    """
+    return MLLP_START + message.encode("utf-8") + MLLP_END
 
 
 def write_to_file(data: str):
@@ -31,11 +58,11 @@ def write_to_file(data: str):
     data : string
         hl7 message received
     """
+    os.makedirs(response_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    filename = str(datetime.now().date()) + '_' + str(datetime.now().time()).replace(':', '-')
-    
-    with open(str(response_dir) + f'/{filename}.txt', "w+") as f:
-        print(f'saving {filename} into directory {response_dir}')
+    with open(str(response_dir) + f'/{timestamp}.txt', "w+") as f:
+        print(f'saving {timestamp} into directory {response_dir}')
         f.write(data)
 
 
@@ -58,8 +85,10 @@ def validate_message(data: str) -> bool:
         m = parse_message(data, find_groups=False)
         required_segments = {'MSH', 'PID'}
         present_segments = {segment.name for segment in m.children}
+        
         return required_segments.issubset(present_segments)
-    except Exception:
+    except Exception as e:
+        print(f"Validation error: {e}")
         return False
             
 
@@ -188,14 +217,14 @@ async def handle_tcp_connection(
             ack_hl7 = ack_message_back(message)
 
             if ack_hl7:
-                writer.write(ack_hl7.encode())
+                writer.write(wrap_with_mllp(ack_hl7))
                 await writer.drain()
         else:
 
             print("Invalid HL7 message: missing required segments")
             error_ack = create_error_ack(message)
             if error_ack:
-                writer.write(error_ack.encode())
+                writer.write(wrap_with_mllp(error_ack))
                 await writer.drain()
 
         write_to_file(data=message)
@@ -216,21 +245,20 @@ async def start_tcp_server():
     async with server:
         await server.serve_forever()
 
-# Set a task to make the server run continuously
+# FastAPI app and TCP server running together
 @asynccontextmanager
-async def lifespan():
+async def lifespan(app: FastAPI):
 
     task = asyncio.create_task(start_tcp_server())
     
-    yield
+    yield # fastapi will run it
 
     try:
         await task
     except asyncio.CancelledError:
         print("TCP server not running")
 
-# Assign the lifespan context manager - no decorator yet. Otherwise FastAPI won't run it
-app.router.lifespan_context = lifespan
+app = FastAPI(lifespan=lifespan)
 
 # Endpoint for HTTP connection
 @app.get("/")
