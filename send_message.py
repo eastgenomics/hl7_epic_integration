@@ -1,65 +1,208 @@
 import argparse
+import datetime
+import logging
+from pathlib import PosixPath, Path
 import socket
+import time
+from typing import Generator, Optional
 
+import hl7apy
 from hl7apy.parser import parse_message
+import schedule
 
 
-def create_test_hl7_message():
-    """
-    Create an hl7 message as an ACK from the original hl7 message received
+TIME = datetime.datetime.now().timestamp()
+
+logger = logging.getLogger(__name__)
+
+
+def get_relevant_files(
+    folder: PosixPath, test: bool
+) -> Generator[PosixPath, None, None]:
+    """Get the relevant files for the HL7 process i.e. files that are less than
+    10 minutes old
+
     Parameters
     ----------
-    original_message : string
-        hl7 message received
-    Returns
-    -------
-    str:
-        HL7 ACK message in MLLP format
+    folder : PosixPath
+        Path containing the files to check
+    test : bool
+        Bool to indicate the test mode
+
+    Yields
+    ------
+    Generator[PosixPath, None, None]
+        Generator for the files in the folder
+        (in case there are a lot of files)
     """
 
-    msg = (
-        "MSH|^~\&|Epic|EPIC||TEST_1844|20250501120337|LABBACKGROUND|ORU^R01^ORU_R01|40165|T|2.5.1|||||||||LRI_NG_RN_Profile^Profile Component^2.16.840.1.113883.9.20^ISO\r"
-        "PID|1||3111691^^^CUH^MR||BEAKER^ADY||19851122|M|||^^^^CB2 0QQ^^P|||||||||||||||||||N|||20221122134431|1\r"
-        "ORC|RE||SP-25120R0004^Beaker|SP-25120R0004^Beaker|CM||^^^^^R|^SP-25120R0004&Beaker|20250430151815|374^CLINICAL SCIENTIST^GLH^^||29489^CONSULTANT^PAS^^^^^^PROVID^^^^PROVID|SPEC:PATH^ADD SPECIALTY PATH LAB^DEPID^ADD^^^^^|||||WLHPC1FR8AH^ADD-CSSD-WS-036||||||ADDENBROOKE'S HOSPITAL^HILLS ROAD^CAMBRIDGE^^CB2 0QQ^^C^^CAMBRIDGESHIRE|||||||LAB9521^RARE DISEASE GENOMIC TESTING LAB ONLY^BEAKER^^^^^^RARE DISEASE GENOMIC TESTING LAB ONLY\r"
-        "OBR|1||SP-25120R0004^Beaker|LAB9620^RARE DISEASE NGS ANALYSIS^BEAKER^^^^^^RARE DISEASE NGS ANALYSIS|||0000||||G|||20250430151732||29489^CONSULTANT^PAS^^^^^^PROVID^^^^PROVID||||||20250430161000||Lab|C|4782&ASSAY TEST&LRRBEAKER&&&&&&ASSAY TEST|||^SP-25120R0004&Beaker|||&SCIENTIST&Glh&CLINICAL&||||||||||||||||||LAB9521^RARE DISEASE GENOMIC TESTING LAB ONLY^BEAKER^^^^^^RARE DISEASE GENOMIC TESTING LAB ONLY\r"
-        "TQ1|1||||||||R\r"
-        "OBX|1|ST|4852^GLH REASON FOR REFERRAL^LRRBEAKER^^^^^^GLH REASON FOR REFERRAL||AVL Testing||||||F|||0000|||||20250430161000||||NHS EAST GENOMIC LABORATORY HUB (699M0)^D^^^^LLB BEAKER^LLB BEAKER^^^184|CAMBRIDGE UNIVERSITY TRUST^ADDENBROOKE'S HOSPITAL^CAMBRIDGE^^CB2 0QQ^ENG^B^^CAMBRIDGESHIRE\r"
-        "OBX|2|ST|5067^GLH RESULT SUMMARY^LRRBEAKER^^^^^^GLH RESULT SUMMARY||lalalal||||||F|||0000|||||20250430161000||||NHS EAST GENOMIC LABORATORY HUB (699M0)^D^^^^LLB BEAKER^LLB BEAKER^^^184|CAMBRIDGE UNIVERSITY TRUST^ADDENBROOKE'S HOSPITAL^CAMBRIDGE^^CB2 0QQ^ENG^B^^CAMBRIDGESHIRE\r"
-        "OBX|3|ST|5068^GLH RESULT^LRRBEAKER^^^^^^GLH RESULT||fsdfsdfsaf||||||F|||0000|||||20250430161000||||NHS EAST GENOMIC LABORATORY HUB (699M0)^D^^^^LLB BEAKER^LLB BEAKER^^^184|CAMBRIDGE UNIVERSITY TRUST^ADDENBROOKE'S HOSPITAL^CAMBRIDGE^^CB2 0QQ^ENG^B^^CAMBRIDGESHIRE\r"
-        "OBX|4|CWE|Genome Assembly|1|5^hg19^^^^^^^^^^^^1.2.840.114350.1.13.366.3.7.4.866582.1040||||||C\r"
-        "OBX|5|CWE|Variant Category|2a|1^Simple^^^^^^^^^^^^1.2.840.114350.1.13.366.3.7.4.866582.35||||||C\r"
-        "OBX|6|CWE|Discrete Genetic Variant|2a|^123:123||||||C\r"
-        "OBX|7|ST|Chromosome|2a|16||||||C\r"
-        "OBX|8|CWE|DNA Change Type|2a|2^Deletion^^^^^^^^^^^^1.2.840.114350.1.13.366.3.7.4.866582.1240||||||C\r"
-        "OBX|9|CWE|Molecular Consequence|2a|120^Intergenic Variant^^^^^^^^^^^^1.2.840.114350.1.13.366.3.7.4.866582.1260||||||C\r"
-        "OBX|10|CWE|Genomic Reference Sequence ID|2a|123^123||||||C\r"
-        "OBX|11|CWE|Genomic DNA Change|2a|123^123^HGVS.g||||||C\r"
-        "OBX|12|CWE|Genetic Variant Source|2a|1^Germline^^^^^^^^^^^^1.2.840.114350.1.13.366.3.7.4.866582.1650||||||C\r"
-        "OBX|13|CWE|Genetic Variant Assessment|2a|1^Detected^^^^^^^^^^^^1.2.840.114350.1.13.366.3.7.4.866582.5000||||||C\r"
-        "OBX|14|CWE|Gene Studied|2a|5^A1BG^HGNC||||||C\r"
-        "OBX|15|CWE|Variant Classification|2a|4^Likely benign^^^^^^^^^^^^1.2.840.114350.1.13.366.3.7.4.866582.1907||||||C\r"
-        "SPM|1|||Fluid^Fluid^^^^^^^Fluid|||||||||||||0000|20250430151732\r"
-        "ZSP|1|100062483\r"
+    for file in folder.iterdir():
+        if file.is_file():
+            # if not test:
+            #     # get files that have been modified 10 minutes ago at the
+            #     # latest
+            #     if TIME - int(file.stat().st_mtime) <= 600:
+            #         yield file
+            # else:
+            yield file
+
+
+def parse_hl7_file(filepath: PosixPath) -> str:
+    """Parse a file containing a HL7 message
+
+    Parameters
+    ----------
+    filepath : PosixPath
+        Path to the file to parse
+
+    Returns
+    -------
+    str
+        Content of the file concatenated
+    """
+
+    with open(filepath) as f:
+        return "".join(f.readlines())
+
+
+def str_to_mllp_hl7_message(msg: str) -> Optional[str]:
+    """Parse a string message to a mllp formated string. Skips files that fail
+    parsing by the HL7apy package
+
+    Parameters
+    ----------
+    msg : str
+        Message extracted from the file
+
+    Returns
+    -------
+    Optional[str]
+        Either the mllp format message or None if the content of the file is
+        not parsable
+    """
+
+    try:
+        msg = parse_message(msg)
+    except hl7apy.exceptions.ParserError:
+        return
+    else:
+        return msg.to_mllp()
+
+
+def schedule_job(epic_socket: socket.socket, messages: list):
+    """Schedule jobs for sending messages
+
+    Parameters
+    ----------
+    epic_socket : socket.socket
+        Socket object
+    messages : list
+        List of messages to send
+    """
+
+    for i in range(8, 18, 1):
+        schedule.every().monday.at(f"{i:02d}:00").do(
+            handle_connection, epic_socket, messages
+        )
+        schedule.every().tuesday.at(f"{i:02d}:00").do(
+            handle_connection, epic_socket, messages
+        )
+        schedule.every().wednesday.at(f"{i:02d}:00").do(
+            handle_connection, epic_socket, messages
+        )
+        schedule.every().thursday.at(f"{i:02d}:00").do(
+            handle_connection, epic_socket, messages
+        )
+        schedule.every().friday.at(f"{i:02d}:00").do(
+            handle_connection, epic_socket, messages
+        )
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+
+def handle_connection(epic_socket: socket.socket, messages: list):
+    """Send messages and receive ACK message back
+
+    Parameters
+    ----------
+    epic_socket : socket.socket
+        Socket object connected to the Epic integration engine
+    messages : list
+        List of messages to send
+    """
+
+    for msg in messages:
+        logger.info("Trying to send messages")
+
+        try:
+            epic_socket.sendall(msg.encode("utf-8"))
+            data = epic_socket.recv(1024)
+
+            if data:
+                logger.info(f"Received ack message back: {data}")
+        except Exception:
+            logger.exception("Error when trying to send the message")
+        else:
+            logger.info("Successfully sent message")
+
+
+def test_function(messages: list):
+    """Test function to test the scheduling package
+
+    Parameters
+    ----------
+    messages : list
+        List of messages to send out
+    """
+
+    schedule.every().minute.do(print, "test")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(10)
+
+
+def main(paths: list, host: str, port: int, test: bool, schedule: bool):
+    logging.basicConfig(
+        filename="hl7_sending_messages.log",
+        level=logging.DEBUG,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     )
+    files = []
 
-    parsed_msg = parse_message(msg)
+    for folder in paths:
+        for file in get_relevant_files(folder, test):
+            files.append(file)
 
-    return parsed_msg.to_mllp()
+    messages = []
 
+    for file in files:
+        msg = parse_hl7_file(file)
+        hl7_msg = str_to_mllp_hl7_message(msg)
 
-def main(host, port):
-    hl7_message = create_test_hl7_message()
+        if hl7_msg:
+            messages.append(hl7_msg)
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((host, port))
-        s.sendall(hl7_message.encode("utf-8"))
-        data = s.recv(1024)
-        print(data)
+    if test:
+        test_function(messages)
+    else:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((host, port))
+
+            if schedule:
+                schedule_job(s, messages)
+            else:
+                handle_connection(s, messages)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("hl7_message_path", nargs="+", type=Path)
     parser.add_argument("host")
     parser.add_argument("port", type=int)
+    parser.add_argument("-t", "--test", action="store_true", default=False)
+    parser.add_argument("-s", "--schedule", action="store_true", default=False)
     args = parser.parse_args()
-    main(args.host, args.port)
+    main(args.hl7_message_path, args.host, args.port, args.test, args.schedule)
