@@ -62,7 +62,7 @@ def parse_hl7_file(filepath: PosixPath) -> str:
     """
 
     with open(filepath) as f:
-        return "".join(f.readlines())
+        return "\r".join([line.strip() for line in f.readlines()])
 
 
 def str_to_mllp_hl7_message(msg: str) -> Optional[str]:
