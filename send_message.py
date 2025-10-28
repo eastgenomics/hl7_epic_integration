@@ -166,7 +166,7 @@ def test_function(messages: list):
         time.sleep(10)
 
 
-def main(paths: list, host: str, port: int, test: bool, schedule: bool):
+def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
     logging.basicConfig(
         filename="hl7_sending_messages.log",
         level=logging.DEBUG,
@@ -193,7 +193,7 @@ def main(paths: list, host: str, port: int, test: bool, schedule: bool):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect((host, port))
 
-            if schedule:
+            if start_schedule:
                 schedule_job(s, messages)
             else:
                 handle_connection(s, messages)
@@ -205,6 +205,14 @@ if __name__ == "__main__":
     parser.add_argument("host")
     parser.add_argument("port", type=int)
     parser.add_argument("-t", "--test", action="store_true", default=False)
-    parser.add_argument("-s", "--schedule", action="store_true", default=False)
+    parser.add_argument(
+        "-s", "--start_schedule", action="store_true", default=False
+    )
     args = parser.parse_args()
-    main(args.hl7_message_path, args.host, args.port, args.test, args.schedule)
+    main(
+        args.hl7_message_path,
+        args.host,
+        args.port,
+        args.test,
+        args.start_schedule,
+    )
