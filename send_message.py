@@ -143,10 +143,11 @@ def handle_connection(epic_socket: socket.socket, messages: list):
 
             if data:
                 logger.info(f"Received ack message back: {data}")
+            else:
+                logger.info("No ACK message received from Epic")
+
         except Exception as e:
             logger.exception(f"Error when trying to send the message: {e}")
-        else:
-            logger.info("Successfully sent message")
 
 
 def test_function(messages: list):
