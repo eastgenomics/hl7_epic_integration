@@ -84,6 +84,7 @@ def str_to_mllp_hl7_message(msg: str) -> Optional[str]:
     try:
         msg = parse_message(msg)
     except hl7apy.exceptions.ParserError:
+        logger.error(f"Error while trying to parse message: {msg}")
         return
     else:
         return msg.to_mllp()
@@ -142,8 +143,8 @@ def handle_connection(epic_socket: socket.socket, messages: list):
 
             if data:
                 logger.info(f"Received ack message back: {data}")
-        except Exception:
-            logger.exception("Error when trying to send the message")
+        except Exception as e:
+            logger.exception(f"Error when trying to send the message: {e}")
         else:
             logger.info("Successfully sent message")
 
