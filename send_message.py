@@ -90,15 +90,15 @@ def str_to_mllp_hl7_message(msg: str) -> Optional[str]:
         return msg.to_mllp()
 
 
-def schedule_job(epic_socket: socket.socket, messages: list):
+def schedule_job(epic_socket: socket.socket, messages: dict):
     """Schedule jobs for sending messages
 
     Parameters
     ----------
     epic_socket : socket.socket
         Socket object
-    messages : list
-        List of messages to send
+    messages : dict
+        Dict of messages to send
     """
 
     for i in range(8, 18, 1):
@@ -123,19 +123,21 @@ def schedule_job(epic_socket: socket.socket, messages: list):
         time.sleep(60)
 
 
-def handle_connection(epic_socket: socket.socket, messages: list):
+def handle_connection(epic_socket: socket.socket, messages: dict):
     """Send messages and receive ACK message back
 
     Parameters
     ----------
     epic_socket : socket.socket
         Socket object connected to the Epic integration engine
-    messages : list
-        List of messages to send
+    messages : dict
+        Dict of messages to send
     """
 
-    for msg in messages:
-        logger.info("Trying to send messages")
+    logger.info("Trying to send messages")
+
+    for source, msg in messages.items():
+        logger.info(f"Message from {source}")
 
         try:
             epic_socket.sendall(msg.encode("utf-8"))
@@ -150,7 +152,7 @@ def handle_connection(epic_socket: socket.socket, messages: list):
             logger.exception(f"Error when trying to send the message: {e}")
 
 
-def test_function(messages: list):
+def test_function(messages: dict):
     """Test function to test the scheduling package
 
     Parameters
@@ -178,14 +180,14 @@ def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
         for file in get_relevant_files(folder, test):
             files.append(file)
 
-    messages = []
+    messages = {}
 
     for file in files:
         msg = parse_hl7_file(file)
         hl7_msg = str_to_mllp_hl7_message(msg)
 
         if hl7_msg:
-            messages.append(hl7_msg)
+            messages[file] = hl7_msg
 
     if test:
         test_function(messages)
