@@ -5,11 +5,13 @@ from pathlib import PosixPath, Path
 import socket
 import time
 from typing import Generator, Optional
-
 import hl7apy
 from hl7apy.parser import parse_message
 import schedule
 
+# MLLP framing characters 
+MLLP_START = b'\x0b'
+MLLP_END = b'\x1c\r'
 
 TIME = datetime.datetime.now().timestamp()
 
@@ -62,11 +64,12 @@ def parse_hl7_file(filepath: PosixPath) -> str:
     """
 
     with open(filepath) as f:
-        return "\r".join([line.strip() for line in f.readlines()])
+        message = f.read()
+        return message
 
 
-def str_to_mllp_hl7_message(msg: str) -> Optional[str]:
-    """Parse a string message to a mllp formated string. Skips files that fail
+def str_to_er7_hl7_message(msg: str) -> Optional[str]:
+    """Parse a string message to a er7 formatted string. Skips files that fail
     parsing by the HL7apy package
 
     Parameters
@@ -82,12 +85,21 @@ def str_to_mllp_hl7_message(msg: str) -> Optional[str]:
     """
 
     try:
-        msg = parse_message(msg)
+        msg = parse_message(msg, find_groups=False)
+        message = msg.to_er7()
+        message = message.replace("\n", "\r").strip()
     except hl7apy.exceptions.ParserError:
         logger.error(f"Error while trying to parse message: {msg}")
         return
     else:
-        return msg.to_mllp()
+        return message
+    
+
+def wrap_with_mllp(message: str) -> bytes:
+    """
+    Wraps an HL7 message string with MLLP framing and returns as bytes
+    """
+    return MLLP_START + message.encode("utf-8") + MLLP_END
 
 
 def schedule_job(epic_socket: socket.socket, messages: dict):
@@ -140,7 +152,7 @@ def handle_connection(epic_socket: socket.socket, messages: dict):
         logger.info(f"Message from {source}")
 
         try:
-            epic_socket.sendall(msg.encode("utf-8"))
+            epic_socket.sendall(msg)
             data = epic_socket.recv(1024)
 
             if data:
@@ -184,7 +196,12 @@ def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
 
     for file in files:
         msg = parse_hl7_file(file)
-        hl7_msg = str_to_mllp_hl7_message(msg)
+        msg_er7 = str_to_er7_hl7_message(msg)
+              
+        if msg_er7 is None:
+            continue
+            
+        hl7_msg = wrap_with_mllp(msg_er7)
 
         if hl7_msg:
             messages[file] = hl7_msg
