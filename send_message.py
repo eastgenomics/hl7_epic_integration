@@ -69,7 +69,7 @@ def parse_hl7_file(filepath: PosixPath) -> str:
 
 
 def str_to_er7_hl7_message(msg: str) -> Optional[str]:
-    """Parse a string message to a er7 formated string. Skips files that fail
+    """Parse a string message to a er7 formatted string. Skips files that fail
     parsing by the HL7apy package
 
     Parameters
@@ -199,7 +199,7 @@ def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
         msg_er7 = str_to_er7_hl7_message(msg)
               
         if msg_er7 is None:
-           continue
+            continue
             
         hl7_msg = wrap_with_mllp(msg_er7)
 
