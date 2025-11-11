@@ -197,7 +197,11 @@ def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
     for file in files:
         msg = parse_hl7_file(file)
         msg_er7 = str_to_er7_hl7_message(msg)
-        hl7_msg=wrap_with_mllp(msg_er7)
+              
+        if msg_er7 is None:
+           continue
+            
+        hl7_msg = wrap_with_mllp(msg_er7)
 
         if hl7_msg:
             messages[file] = hl7_msg
