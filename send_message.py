@@ -166,7 +166,7 @@ def handle_connection(
         success = False
         logger.info(f"Message from {source}")
 
-        while attempt <= 5:
+        while attempt < 5:
             try:
                 epic_socket.sendall(msg.encode("utf-8"))
                 data = epic_socket.recv(1024)
