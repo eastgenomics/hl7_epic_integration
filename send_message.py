@@ -102,21 +102,10 @@ def schedule_job(epic_socket: socket.socket, messages: dict):
     """
 
     for i in range(8, 18, 1):
-        schedule.every().monday.at(f"{i:02d}:00").do(
-            handle_connection, epic_socket, messages
-        )
-        schedule.every().tuesday.at(f"{i:02d}:00").do(
-            handle_connection, epic_socket, messages
-        )
-        schedule.every().wednesday.at(f"{i:02d}:00").do(
-            handle_connection, epic_socket, messages
-        )
-        schedule.every().thursday.at(f"{i:02d}:00").do(
-            handle_connection, epic_socket, messages
-        )
-        schedule.every().friday.at(f"{i:02d}:00").do(
-            handle_connection, epic_socket, messages
-        )
+        for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
+            getattr(schedule.every(), day).at(f"{i:02d}:00").do(
+                handle_connection, epic_socket, messages
+            )
 
     while True:
         schedule.run_pending()
