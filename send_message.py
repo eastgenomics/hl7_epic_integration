@@ -160,9 +160,9 @@ def handle_connection(
     """
 
     logger.info("Trying to send messages")
-    attempt = 0
 
     for source, msg in messages.items():
+        attempt = 0
         success = False
         logger.info(f"Message from {source}")
 
