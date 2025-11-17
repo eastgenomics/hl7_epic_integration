@@ -90,7 +90,9 @@ def str_to_mllp_hl7_message(msg: str) -> Optional[str]:
         return msg.to_mllp()
 
 
-def schedule_job(epic_socket: socket.socket, messages: dict):
+def schedule_job(
+    epic_socket: socket.socket, messages: dict, host: str, port: int
+):
     """Schedule jobs for sending messages
 
     Parameters
@@ -99,12 +101,16 @@ def schedule_job(epic_socket: socket.socket, messages: dict):
         Socket object
     messages : dict
         Dict of messages to send
+    host : str
+        String for the host to connect to
+    port : int
+        Port number
     """
 
     for i in range(8, 18, 1):
         for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
             getattr(schedule.every(), day).at(f"{i:02d}:00").do(
-                handle_connection, epic_socket, messages
+                handle_connection, epic_socket, messages, host, port
             )
 
     while True:
@@ -112,7 +118,33 @@ def schedule_job(epic_socket: socket.socket, messages: dict):
         time.sleep(60)
 
 
-def handle_connection(epic_socket: socket.socket, messages: dict):
+def connect_to_socket(
+    socket: socket.socket, host: str, port: int
+) -> socket.socket:
+    """Connect to the specified host and port
+
+    Parameters
+    ----------
+    socket : socket.socket
+        Socket object
+    host : str
+        String for the host to connect to
+    port : int
+        Port number
+
+    Returns
+    -------
+    socket.socket
+        Socket object
+    """
+
+    socket.connect((host, port))
+    return socket
+
+
+def handle_connection(
+    epic_socket: socket.socket, messages: dict, host: str, port: int
+) -> Optional[None]:
     """Send messages and receive ACK message back
 
     Parameters
@@ -121,24 +153,49 @@ def handle_connection(epic_socket: socket.socket, messages: dict):
         Socket object connected to the Epic integration engine
     messages : dict
         Dict of messages to send
+    host : str
+        String for the host to connect to
+    port : int
+        Port number
     """
 
     logger.info("Trying to send messages")
+    attempt = 0
 
     for source, msg in messages.items():
+        success = False
         logger.info(f"Message from {source}")
 
-        try:
-            epic_socket.sendall(msg.encode("utf-8"))
-            data = epic_socket.recv(1024)
+        while attempt <= 5:
+            try:
+                epic_socket.sendall(msg.encode("utf-8"))
+                data = epic_socket.recv(1024)
 
-            if data:
-                logger.info(f"Received ack message back: {data}")
-            else:
-                logger.info("No ACK message received from Epic")
+                if data:
+                    logger.info(f"Received ack message back: {data}")
+                else:
+                    logger.info("No ACK message received from Epic")
 
-        except Exception as e:
-            logger.exception(f"Error when trying to send the message: {e}")
+                success = True
+                break
+
+            except BrokenPipeError:
+                attempt += 1
+                logger.error(
+                    (
+                        "Failed to send message (probably due to connection "
+                        "reset on Epic side. Attempting to reconnect...)"
+                    )
+                )
+                time.sleep(300)
+                epic_socket = connect_to_socket(epic_socket, host, port)
+
+            except Exception as e:
+                logger.exception(f"Error when trying to send the message: {e}")
+                break
+
+        if success is False:
+            return
 
 
 def test_function(messages: dict):
@@ -182,12 +239,12 @@ def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
         test_function(messages)
     else:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((host, port))
+            s = connect_to_socket(s, host, port)
 
             if start_schedule:
-                schedule_job(s, messages)
+                schedule_job(s, messages, host, port)
             else:
-                handle_connection(s, messages)
+                handle_connection(s, messages, host, port)
 
 
 if __name__ == "__main__":
