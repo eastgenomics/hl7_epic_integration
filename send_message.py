@@ -188,6 +188,7 @@ def handle_connection(
                     )
                 )
                 time.sleep(300)
+                epic_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 epic_socket = connect_to_socket(epic_socket, host, port)
 
             except Exception as e:
