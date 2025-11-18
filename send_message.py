@@ -9,9 +9,6 @@ import hl7apy
 from hl7apy.parser import parse_message
 import schedule
 
-# MLLP framing characters 
-MLLP_START = b'\x0b'
-MLLP_END = b'\x1c\r'
 
 TIME = datetime.datetime.now().timestamp()
 
@@ -22,7 +19,7 @@ def get_relevant_files(
     folder: PosixPath, test: bool
 ) -> Generator[PosixPath, None, None]:
     """Get the relevant files for the HL7 process i.e. files that are less than
-    10 minutes old
+    an hour old
 
     Parameters
     ----------
@@ -40,13 +37,13 @@ def get_relevant_files(
 
     for file in folder.iterdir():
         if file.is_file():
-            # if not test:
-            #     # get files that have been modified 10 minutes ago at the
-            #     # latest
-            #     if TIME - int(file.stat().st_mtime) <= 600:
-            #         yield file
-            # else:
-            yield file
+            if not test:
+                # get files that have been modified 1 hour ago at the
+                # latest
+                if TIME - int(file.stat().st_mtime) <= 3600:
+                    yield file
+            else:
+                yield file
 
 
 def parse_hl7_file(filepath: PosixPath) -> str:
@@ -93,7 +90,7 @@ def str_to_er7_hl7_message(msg: str) -> Optional[str]:
         return
     else:
         return message
-    
+
 
 def wrap_with_mllp(message: str) -> bytes:
     """
@@ -211,22 +208,6 @@ def handle_connection(
             return
 
 
-def test_function(messages: dict):
-    """Test function to test the scheduling package
-
-    Parameters
-    ----------
-    messages : list
-        List of messages to send out
-    """
-
-    schedule.every().minute.do(print, "test")
-
-    while True:
-        schedule.run_pending()
-        time.sleep(10)
-
-
 def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
     logging.basicConfig(
         filename="hl7_sending_messages.log",
@@ -244,25 +225,22 @@ def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
     for file in files:
         msg = parse_hl7_file(file)
         msg_er7 = str_to_er7_hl7_message(msg)
-              
+
         if msg_er7 is None:
             continue
-            
+
         hl7_msg = wrap_with_mllp(msg_er7)
 
         if hl7_msg:
             messages[file] = hl7_msg
 
-    if test:
-        test_function(messages)
-    else:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s = connect_to_socket(s, host, port)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s = connect_to_socket(s, host, port)
 
-            if start_schedule:
-                schedule_job(s, messages, host, port)
-            else:
-                handle_connection(s, messages, host, port)
+        if start_schedule:
+            schedule_job(s, messages, host, port)
+        else:
+            handle_connection(s, messages, host, port)
 
 
 if __name__ == "__main__":
