@@ -103,7 +103,7 @@ def wrap_with_mllp(message: str) -> bytes:
 
 
 def schedule_job(
-    epic_socket: socket.socket, messages: dict, host: str, port: int
+    epic_socket: socket.socket, paths: list, test: bool, host: str, port: int
 ):
     """Schedule jobs for sending messages
 
@@ -111,8 +111,10 @@ def schedule_job(
     ----------
     epic_socket : socket.socket
         Socket object
-    messages : dict
-        Dict of messages to send
+    paths : list
+        List of paths in which to look for files
+    test : bool
+        Bool to indicate whether test mode has been activated
     host : str
         String for the host to connect to
     port : int
@@ -122,7 +124,7 @@ def schedule_job(
     for i in range(8, 18, 1):
         for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
             getattr(schedule.every(), day).at(f"{i:02d}:00").do(
-                handle_connection, epic_socket, messages, host, port
+                parse_and_send_message, epic_socket, paths, test, host, port
             )
 
     while True:
@@ -154,22 +156,52 @@ def connect_to_socket(
     return socket
 
 
-def handle_connection(
-    epic_socket: socket.socket, messages: dict, host: str, port: int
+def parse_and_send_message(
+    epic_socket: socket.socket,
+    paths: list,
+    test: bool,
+    host: str,
+    port: int,
 ) -> Optional[None]:
-    """Send messages and receive ACK message back
+    """Gather, parse and send messages to the host and receive ACK message back
 
     Parameters
     ----------
     epic_socket : socket.socket
         Socket object connected to the Epic integration engine
-    messages : dict
-        Dict of messages to send
+    paths : list
+        List of paths in which to look for files
+    test : bool
+        Bool to indicate whether test mode has been activated
     host : str
         String for the host to connect to
     port : int
         Port number
     """
+
+    logger.info(f"Gathering files from '{", ".join(paths)}'")
+
+    files = []
+
+    for folder in paths:
+        for file in get_relevant_files(folder, test):
+            files.append(file)
+
+    messages = {}
+
+    logger.info(f"Parsing '{", ".join(files)}'")
+
+    for file in files:
+        msg = parse_hl7_file(file)
+        msg_er7 = str_to_er7_hl7_message(msg)
+
+        if msg_er7 is None:
+            continue
+
+        hl7_msg = wrap_with_mllp(msg_er7)
+
+        if hl7_msg:
+            messages[file] = hl7_msg
 
     logger.info("Trying to send messages")
 
@@ -178,6 +210,8 @@ def handle_connection(
         success = False
         logger.info(f"Message from {source}")
 
+        # attempt to reconnect 5 times to the host if the connection is reset
+        # on their side
         while attempt < 5:
             try:
                 epic_socket.sendall(msg)
@@ -217,33 +251,13 @@ def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
         level=logging.DEBUG,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     )
-    files = []
-
-    for folder in paths:
-        for file in get_relevant_files(folder, test):
-            files.append(file)
-
-    messages = {}
-
-    for file in files:
-        msg = parse_hl7_file(file)
-        msg_er7 = str_to_er7_hl7_message(msg)
-
-        if msg_er7 is None:
-            continue
-
-        hl7_msg = wrap_with_mllp(msg_er7)
-
-        if hl7_msg:
-            messages[file] = hl7_msg
-
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s = connect_to_socket(s, host, port)
 
         if start_schedule:
-            schedule_job(s, messages, host, port)
+            schedule_job(s, paths, test, host, port)
         else:
-            handle_connection(s, messages, host, port)
+            parse_and_send_message(s, paths, test, host, port)
 
 
 if __name__ == "__main__":
