@@ -9,8 +9,9 @@ import hl7apy
 from hl7apy.parser import parse_message
 import schedule
 
-
-TIME = datetime.datetime.now().timestamp()
+# MLLP framing characters
+MLLP_START = b"\x0b"
+MLLP_END = b"\x1c\r"
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ def get_relevant_files(
         Generator for the files in the folder
         (in case there are a lot of files)
     """
+
+    TIME = datetime.datetime.now().timestamp()
 
     for file in folder.iterdir():
         if file.is_file():
