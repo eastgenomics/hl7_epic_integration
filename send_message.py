@@ -103,14 +103,14 @@ def wrap_with_mllp(message: str) -> bytes:
 
 
 def schedule_job(
-    epic_socket: socket.socket, paths: list, test: bool, host: str, port: int
+    epic_socket: dict, paths: list, test: bool, host: str, port: int
 ):
     """Schedule jobs for sending messages
 
     Parameters
     ----------
-    epic_socket : socket.socket
-        Socket object
+    epic_socket : dict
+        Dict holding the socket object
     paths : list
         List of paths in which to look for files
     test : bool
@@ -157,18 +157,14 @@ def connect_to_socket(
 
 
 def parse_and_send_message(
-    epic_socket: socket.socket,
-    paths: list,
-    test: bool,
-    host: str,
-    port: int,
+    epic_socket: dict, paths: list, test: bool, host: str, port: int
 ) -> Optional[None]:
     """Gather, parse and send messages to the host and receive ACK message back
 
     Parameters
     ----------
-    epic_socket : socket.socket
-        Socket object connected to the Epic integration engine
+    epic_socket : dict
+        Dict holding the socket object connected to the Epic integration engine
     paths : list
         List of paths in which to look for files
     test : bool
@@ -214,8 +210,8 @@ def parse_and_send_message(
         # on their side
         while attempt < 5:
             try:
-                epic_socket.sendall(msg)
-                data = epic_socket.recv(1024)
+                epic_socket["socket"].sendall(msg)
+                data = epic_socket["socket"].recv(1024)
 
                 if data:
                     logger.info(f"Received ack message back: {data}")
@@ -234,8 +230,10 @@ def parse_and_send_message(
                     )
                 )
                 time.sleep(300)
-                epic_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                epic_socket = connect_to_socket(epic_socket, host, port)
+                new_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                epic_socket["socket"] = connect_to_socket(
+                    new_socket, host, port
+                )
 
             except Exception as e:
                 logger.exception(f"Error when trying to send the message: {e}")
@@ -251,13 +249,14 @@ def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
         level=logging.DEBUG,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     )
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s = connect_to_socket(s, host, port)
+        socket_holder = {"socket": connect_to_socket(s, host, port)}
 
         if start_schedule:
-            schedule_job(s, paths, test, host, port)
+            schedule_job(socket_holder, paths, test, host, port)
         else:
-            parse_and_send_message(s, paths, test, host, port)
+            parse_and_send_message(socket_holder, paths, test, host, port)
 
 
 if __name__ == "__main__":
