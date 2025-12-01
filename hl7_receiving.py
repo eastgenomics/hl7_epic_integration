@@ -40,9 +40,7 @@ def remove_mllp_framing_bytes(data: bytes) -> str:
     message = None
     if data.startswith(MLLP_START) and data.endswith(MLLP_END):
         data = data[1:-2]
-        message = data.decode()
-    else:
-        message = data
+    message = data.decode()
     return  message.replace('\n','\r')
 
 def wrap_with_mllp(message: str) -> bytes:
@@ -68,8 +66,8 @@ def get_file_name(data: str):
     """
 
     if data.startswith(MLLP_START) and data.endswith(MLLP_END):
-        raw = data[1:-2]
-        message = raw.decode().replace('\n', '\r')
+        data = data[1:-2]
+    message = data.decode().replace('\n', '\r')
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -81,28 +79,22 @@ def get_file_name(data: str):
 
     datetime_msg = m.msh.msh_7.value if m.msh.msh_7 else "NO_DATETIME"
 
-    specimen = "NO_SPECIMEN"
-
     # Get specimen ID from ORC field (location depends on order or result)
+    specimen = "NO_SPECIMEN"
+    specimen_id = None
+
     if hasattr(m, "orc") and m.orc:
-        # Try ORC-2 first
-        if m.orc.orc_2 and m.orc.orc_2.value:
-            specimen_id = m.orc.orc_2.value
+        for orc_field in [m.orc.orc_2, m.orc.orc_3, m.orc.orc_4]:
+            # Check value explicitly against None (handles value == 0)
+            if orc_field is not None and orc_field.value is not None:
+                specimen_id = orc_field.value
+                break
 
-        # Then try ORC-3
-        elif m.orc.orc_3 and m.orc.orc_3.value:
-            specimen_id = m.orc.orc_3.value
-
-        # Then try ORC-4
-        elif m.orc.orc_4 and m.orc.orc_4.value:
-            specimen_id = m.orc.orc_4.value
-
-        else:
-            specimen_id = None
-
-        # Normalize specimen value
-        if specimen_id:
-            specimen = specimen_id.split("^")[0]
+    # Normalize specimen
+    if specimen_id is not None:
+        specimen = str(specimen_id).split("^")[0]
+    else:
+        specimen = "NO_SPECIMEN"
 
     return datetime_msg, specimen, timestamp
 
