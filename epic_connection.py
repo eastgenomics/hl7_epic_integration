@@ -86,7 +86,7 @@ def send_message_to_epic(
         # on their side
         while attempt < 5:
             try:
-                epic_socket["socket"].sendall(msg)
+                epic_socket["socket"].sendall(msg.encode())
                 data = epic_socket["socket"].recv(1024)
 
                 if data:
@@ -165,7 +165,6 @@ def main(host: str, port: int, paths: list):
     read_list = [local_server]
 
     while True:
-        logger.debug("Checking for data")
         # allows for the while loop to not get stuck on the acceptance of
         # socket connection and allowing the scheduling to get triggered
         readable, writable, errored = select.select(read_list, [], [], 60)
@@ -182,8 +181,10 @@ def main(host: str, port: int, paths: list):
 
                     # Received message indicating the size of the next message
                     if size_info:
-                        logger.debug(data)
                         size_data = int(size_info.group("size"))
+                        logger.debug(
+                            f"Data will be {size_data} bytes of length"
+                        )
                         conn.sendall("Received size data".encode())
                         data = ""
 
@@ -193,17 +194,26 @@ def main(host: str, port: int, paths: list):
                         size_data -= 1024
                         data += conn.recv(1024).decode()
 
-                    try:
-                        json_data = json.loads(data)
-                    except TypeError:
-                        logger.error(f"Received {data} but not in JSON format")
-                    else:
-                        conn.sendall("Received data".encode())
-                        send_message_to_epic(
-                            epic_socket_holder, json_data, host, port
+                    if len(data.encode()) == size_data:
+                        logger.error(
+                            "Length of data received doesn't match size "
+                            "information received ahead of time: "
+                            f"{len(data.encode())} != {size_data}"
                         )
+                    else:
+                        try:
+                            json_data = json.loads(data)
+                        except TypeError:
+                            logger.error(
+                                f"Received {data} but not in JSON format"
+                            )
+                        else:
+                            conn.sendall("Received data".encode())
+                            send_message_to_epic(
+                                epic_socket_holder, json_data, host, port
+                            )
 
-                size_data = 0
+                    size_data = 0
 
                 conn.close()
 
