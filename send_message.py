@@ -164,13 +164,13 @@ def main(paths: list, port: int, test: bool):
     # handle connect and sending of JSON data to local server
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect(("127.0.0.1", port))
-        s.sendall(f"Sending : {len(data_to_send)}\n".encode())
-        logger.info("Sent size info")
+
+        s.sendall(f"Sending : {len(data_to_send)}".encode())
         s.sendall(json.dumps(messages).encode())
-        logger.info("Sent data")
+
         received = s.recv(1024)
         received = received.decode("utf-8")
-        logger.info(f"Received {received}")
+        logger.info(f"Received `{received}`")
 
 
 if __name__ == "__main__":
