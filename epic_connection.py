@@ -205,7 +205,7 @@ def main(host: str, port: int, paths: list):
                             break
 
                         data_msg += data_chunk.decode()
-                        bytes_received = len(data_chunk)
+                        bytes_received += len(data_chunk)
 
                     if len(data_msg.encode()) != size_data:
                         logger.error(
