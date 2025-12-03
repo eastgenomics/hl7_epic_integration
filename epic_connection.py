@@ -100,7 +100,7 @@ def send_message_to_epic(
 
             except BrokenPipeError:
                 attempt += 1
-                logger.error(
+                logger.exception(
                     (
                         "Failed to send message (probably due to connection "
                         "reset on Epic side. Attempting to reconnect in 5 "
@@ -217,7 +217,7 @@ def main(host: str, port: int, paths: list):
                         try:
                             json_data = json.loads(data_msg)
                         except json.JSONDecodeError:
-                            logger.error(
+                            logger.exception(
                                 f"Received {data_msg} but not in JSON format"
                             )
                         else:
