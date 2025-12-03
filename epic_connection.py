@@ -194,7 +194,7 @@ def main(host: str, port: int, paths: list):
                         size_data -= 1024
                         data += conn.recv(1024).decode()
 
-                    if len(data.encode()) == size_data:
+                    if len(data.encode()) != size_data:
                         logger.error(
                             "Length of data received doesn't match size "
                             "information received ahead of time: "
