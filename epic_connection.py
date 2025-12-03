@@ -161,7 +161,6 @@ def main(host: str, port: int, paths: list):
     logger.info("Started local server")
 
     size_data = 0
-    original_size = 0
 
     read_list = [local_server]
 
@@ -185,7 +184,6 @@ def main(host: str, port: int, paths: list):
                     # Received message indicating the size of the next message
                     if size_info:
                         size_data = int(size_info.group("size"))
-                        original_size = size_data
                         logger.debug(
                             f"Data will be {size_data} bytes of length"
                         )
@@ -195,17 +193,24 @@ def main(host: str, port: int, paths: list):
                         # of the message and add it to the final result
                         data_msg += size_info.group("start_data")
 
-                    while size_data > 0:
+                    bytes_received = len(data_msg.encode())
+
+                    while size_data > bytes_received:
                         # while there is data left in the next message,
                         # continue receiving data
-                        size_data -= 1024
-                        data_msg += conn.recv(1024).decode()
+                        data_chunk = conn.recv(1024)
 
-                    if len(data_msg.encode()) != original_size:
+                        if not data_chunk:
+                            break
+
+                        data_msg += data_chunk.decode()
+                        bytes_received = len(data_chunk)
+
+                    if len(data_msg.encode()) != size_data:
                         logger.error(
                             "Length of data received doesn't match size "
                             "information received ahead of time: "
-                            f"{len(data_msg.encode())} != {original_size}"
+                            f"{len(data_msg.encode())} != {size_data}"
                         )
                     else:
                         try:
