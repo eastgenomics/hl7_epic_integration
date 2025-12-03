@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+from pathlib import Path
 import select
 import socket
 import sys
@@ -238,6 +239,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("host", default="test")
     parser.add_argument("port", type=int)
-    parser.add_argument("-p", "--paths", nargs="+")
+    parser.add_argument("-p", "--paths", nargs="+", type=Path)
     args = parser.parse_args()
     main(args.host, args.port, args.paths)
