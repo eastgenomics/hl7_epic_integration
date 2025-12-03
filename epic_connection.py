@@ -161,6 +161,7 @@ def main(host: str, port: int, paths: list):
     logger.info("Started local server")
 
     size_data = 0
+    original_size = 0
 
     read_list = [local_server]
 
@@ -173,39 +174,45 @@ def main(host: str, port: int, paths: list):
             if s is local_server:
                 conn, _ = local_server.accept()
                 data = conn.recv(1024).decode().strip()
+                data_msg = ""
 
                 if data:
                     size_info = re.search(
-                        r"(?P<sending>Sending : )(?P<size>[0-9]+)", data
+                        r"(?P<sending>Sending : )(?P<size>[0-9]+)(?P<start_data>.*)",
+                        data,
                     )
 
                     # Received message indicating the size of the next message
                     if size_info:
                         size_data = int(size_info.group("size"))
+                        original_size = size_data
                         logger.debug(
                             f"Data will be {size_data} bytes of length"
                         )
                         conn.sendall("Received size data".encode())
-                        data = ""
+                        # actual data is mixed in with the size of data
+                        # message, so extract the bytes with the actual start
+                        # of the message and add it to the final result
+                        data_msg += size_info.group("start_data")
 
                     while size_data > 0:
                         # while there is data left in the next message,
                         # continue receiving data
                         size_data -= 1024
-                        data += conn.recv(1024).decode()
+                        data_msg += conn.recv(1024).decode()
 
-                    if len(data.encode()) != size_data:
+                    if len(data_msg.encode()) != original_size:
                         logger.error(
                             "Length of data received doesn't match size "
                             "information received ahead of time: "
-                            f"{len(data.encode())} != {size_data}"
+                            f"{len(data_msg.encode())} != {size_data}"
                         )
                     else:
                         try:
-                            json_data = json.loads(data)
+                            json_data = json.loads(data_msg)
                         except TypeError:
                             logger.error(
-                                f"Received {data} but not in JSON format"
+                                f"Received {data_msg} but not in JSON format"
                             )
                         else:
                             conn.sendall("Received data".encode())
