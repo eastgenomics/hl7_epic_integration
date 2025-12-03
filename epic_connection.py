@@ -1,8 +1,10 @@
 import argparse
 import json
 import logging
+import select
 import socket
 import sys
+import re
 import time
 
 import schedule
@@ -10,9 +12,6 @@ import schedule
 import send_message
 
 LOCAL_PORT = 2000
-# MLLP framing characters
-MLLP_START = b"\x0b"
-MLLP_END = b"\x1c\r"
 
 
 logger = logging.getLogger(__name__)
@@ -58,22 +57,29 @@ def connect_to_socket(
     return socket
 
 
-def wrap_with_mllp(message: str) -> bytes:
-    """
-    Wraps an HL7 message string with MLLP framing and returns as bytes
-    """
-    return MLLP_START + message.encode("utf-8") + MLLP_END
+def send_message_to_epic(
+    epic_socket: dict, messages: dict, host: str, port: int
+):
+    """Send message to epic
 
+    Parameters
+    ----------
+    epic_socket : dict
+        Dict containing the socket to use
+    messages : dict
+        Dict containing the message and its origin
+    host : str
+        Host IP for the Epic environment
+    port : int
+        Port for the Epic environment
+    """
 
-def send_message_to_epic(epic_socket, messages, host, port):
     logger.info("Trying to send messages")
 
     for source, msg in messages.items():
         attempt = 0
         success = False
         logger.info(f"Message from {source}")
-
-        msg = wrap_with_mllp(msg)
 
         # attempt to reconnect 5 times to the host if the connection is reset
         # on their side
@@ -95,7 +101,8 @@ def send_message_to_epic(epic_socket, messages, host, port):
                 logger.error(
                     (
                         "Failed to send message (probably due to connection "
-                        "reset on Epic side. Attempting to reconnect...)"
+                        "reset on Epic side. Attempting to reconnect in 5 "
+                        f"minutes: {attempt}/5)"
                     )
                 )
                 time.sleep(300)
@@ -112,12 +119,30 @@ def send_message_to_epic(epic_socket, messages, host, port):
             return
 
 
-def main(host: str, port: int, paths):
+def main(host: str, port: int, paths: list):
+    """Main function to connect to Epic, start the local server and if
+    necessary start the scheduling of jobs
+
+    Parameters
+    ----------
+    host : str
+        Host IP for Epic
+    port : int
+        Port for Epic
+    paths : list
+        Paths from which to start the scheduling from
+    """
+
     logging.basicConfig(
         filename="hl7_sending_messages.log",
         level=logging.DEBUG,
-        format="%(asctime)s - %(levelname)s - %(filename)s : %(funcName)20s() - %(message)s",
+        format=(
+            "%(asctime)s - %(levelname)7s - "
+            "%(filename)18s : %(funcName)20s() - "
+            "%(message)s"
+        ),
     )
+
     logger.info(f"Command line: `{' '.join(sys.argv)}`")
 
     # epic_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -128,40 +153,58 @@ def main(host: str, port: int, paths):
         logger.info("Starting scheduled jobs")
         schedule_job(paths)
 
-    local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    local_socket.bind(("127.0.0.1", LOCAL_PORT))
-    local_socket.listen(1)
+    # setup the local server
+    local_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    local_server.bind(("127.0.0.1", LOCAL_PORT))
+    local_server.listen(1)
     logger.info("Started local server")
 
     size_data = 0
 
+    read_list = [local_server]
+
     while True:
-        conn, _ = local_socket.accept()
-        data = conn.recv(1024).decode().strip()
+        logger.debug("Checking for data")
+        # allows for the while loop to not get stuck on the acceptance of
+        # socket connection and allowing the scheduling to get triggered
+        readable, writable, errored = select.select(read_list, [], [], 60)
 
-        if data:
-            if data.startswith("Sending"):
-                logger.debug(data)
-                size_data = int(data.split(" : ")[1])
-                data = ""
+        for s in readable:
+            if s is local_server:
+                conn, _ = local_server.accept()
+                data = conn.recv(1024).decode().strip()
 
-            while size_data > 0:
-                size_data -= 1024
-                data += conn.recv(1024).decode()
-                # logger.debug(data)
+                if data:
+                    size_info = re.search(
+                        r"(?P<sending>Sending : )(?P<size>[0-9]+)", data
+                    )
 
-            try:
-                json_data = json.loads(data)
-            except TypeError:
-                logger.error(f"Received {data} but not in JSON format")
-            else:
-                logger.debug(f"Received {json_data}")
-                conn.sendall("Message received".encode())
-                # send_message_to_epic(epic_socket_holder, json.loads(data), host, port)
+                    # Received message indicating the size of the next message
+                    if size_info:
+                        logger.debug(data)
+                        size_data = int(size_info.group("size"))
+                        conn.sendall("Received size data".encode())
+                        data = ""
 
-        size_data = 0
+                    while size_data > 0:
+                        # while there is data left in the next message,
+                        # continue receiving data
+                        size_data -= 1024
+                        data += conn.recv(1024).decode()
 
-        conn.close()
+                    try:
+                        json_data = json.loads(data)
+                    except TypeError:
+                        logger.error(f"Received {data} but not in JSON format")
+                    else:
+                        conn.sendall("Received data".encode())
+                        # send_message_to_epic(
+                        #     epic_socket_holder, json_data, host, port
+                        # )
+
+                size_data = 0
+
+                conn.close()
 
         if schedule.get_jobs():
             # run the scheduling
