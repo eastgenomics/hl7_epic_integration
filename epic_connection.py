@@ -11,6 +11,7 @@ import schedule
 
 import send_message
 
+# port for local communication with the send_message.py script
 LOCAL_PORT = 2000
 
 
