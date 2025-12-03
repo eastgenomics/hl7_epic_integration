@@ -119,7 +119,7 @@ def main(paths: list, port: int, test: bool):
         Port of the local server
     test : bool
         Boolean indicating whether to run the script in test mode i.e. does the
-        script parse only files that have been here for the past 10 minutes
+        script parse only files that have been here for the past hour
     """
 
     logging.basicConfig(
@@ -145,7 +145,7 @@ def main(paths: list, port: int, test: bool):
 
     if not files:
         logger.info(f"No files found in '{", ".join(list_paths)}'.")
-        sys.exit()
+        return
 
     messages = {}
 
