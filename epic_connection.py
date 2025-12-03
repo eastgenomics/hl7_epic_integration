@@ -205,7 +205,7 @@ def main(host: str, port: int, paths: list):
                         logger.error(
                             "Length of data received doesn't match size "
                             "information received ahead of time: "
-                            f"{len(data_msg.encode())} != {size_data}"
+                            f"{len(data_msg.encode())} != {original_size}"
                         )
                     else:
                         try:
