@@ -35,13 +35,13 @@ def schedule_job(paths: list):
 
 
 def connect_to_socket(
-    socket: socket.socket, host: str, port: int
+    sock: socket.socket, host: str, port: int
 ) -> socket.socket:
     """Connect to the specified host and port
 
     Parameters
     ----------
-    socket : socket.socket
+    sock : socket.socket
         Socket object
     host : str
         String for the host to connect to
@@ -54,8 +54,8 @@ def connect_to_socket(
         Socket object
     """
 
-    socket.connect((host, port))
-    return socket
+    sock.connect((host, port))
+    return sock
 
 
 def send_message_to_epic(
