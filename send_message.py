@@ -166,7 +166,7 @@ def main(paths: list, port: int, test: bool):
         s.connect(("127.0.0.1", port))
 
         s.sendall(f"Sending : {len(data_to_send)}".encode())
-        s.sendall(json.dumps(messages).encode())
+        s.sendall(data_to_send)
 
         received = s.recv(1024)
         received = received.decode("utf-8")
