@@ -13,6 +13,10 @@ from hl7apy.parser import parse_message
 
 logger = logging.getLogger(__name__)
 
+# MLLP framing characters
+MLLP_START = "\x0b"
+MLLP_END = "\x1c\r"
+
 
 def get_relevant_files(folder: PosixPath, test: bool) -> list:
     """Get the relevant files for the HL7 process i.e. files that are less than
@@ -97,11 +101,35 @@ def str_to_er7_hl7_message(msg: str) -> Optional[str]:
         return message
 
 
+def wrap_with_mllp(message: str) -> str:
+    """
+    Wraps an HL7 message string with MLLP framing
+    """
+    return MLLP_START + message + MLLP_END
+
+
 def main(paths: list, port: int, test: bool):
+    """Gather, parse and send parsed content to local server
+
+    Parameters
+    ----------
+    paths : list
+        List of paths to files or folders in which message files are present
+    port : int
+        Port of the local server
+    test : bool
+        Boolean indicating whether to run the script in test mode i.e. does the
+        script parse only files that have been here for the past 10 minutes
+    """
+
     logging.basicConfig(
         filename="hl7_sending_messages.log",
         level=logging.DEBUG,
-        format="%(asctime)s - %(levelname)s - %(filename)s : %(funcName)20s() - %(message)s",
+        format=(
+            "%(asctime)s - %(levelname)7s - "
+            "%(filename)18s : %(funcName)20s() - "
+            "%(message)s"
+        ),
     )
 
     logger.info(f"Arguments used: {paths} | {port} | {test}")
@@ -128,7 +156,8 @@ def main(paths: list, port: int, test: bool):
         msg_er7 = str_to_er7_hl7_message(msg)
 
         if msg_er7 is not None:
-            messages[f"{file.resolve()}"] = msg_er7
+            msg = wrap_with_mllp(msg_er7)
+            messages[f"{file.resolve()}"] = msg
 
     data_to_send = json.dumps(messages).encode()
 
@@ -136,9 +165,12 @@ def main(paths: list, port: int, test: bool):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect(("127.0.0.1", port))
         s.sendall(f"Sending : {len(data_to_send)}\n".encode())
+        logger.info("Sent size info")
         s.sendall(json.dumps(messages).encode())
+        logger.info("Sent data")
         received = s.recv(1024)
         received = received.decode("utf-8")
+        logger.info(f"Received {received}")
 
 
 if __name__ == "__main__":
