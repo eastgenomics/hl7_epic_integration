@@ -145,9 +145,9 @@ def main(host: str, port: int, paths: list):
 
     logger.info(f"Command line: `{' '.join(sys.argv)}`")
 
-    # epic_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # epic_socket_holder = {"socket": connect_to_socket(epic_socket, host, port)}
-    # logger.info(f"Initial connection to {host}:{port}")
+    epic_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    epic_socket_holder = {"socket": connect_to_socket(epic_socket, host, port)}
+    logger.info(f"Initial connection to {host}:{port}")
 
     if paths:
         logger.info("Starting scheduled jobs")
@@ -198,9 +198,9 @@ def main(host: str, port: int, paths: list):
                         logger.error(f"Received {data} but not in JSON format")
                     else:
                         conn.sendall("Received data".encode())
-                        # send_message_to_epic(
-                        #     epic_socket_holder, json_data, host, port
-                        # )
+                        send_message_to_epic(
+                            epic_socket_holder, json_data, host, port
+                        )
 
                 size_data = 0
 
