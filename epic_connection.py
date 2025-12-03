@@ -210,7 +210,7 @@ def main(host: str, port: int, paths: list):
                     else:
                         try:
                             json_data = json.loads(data_msg)
-                        except TypeError:
+                        except json.JSONDecodeError:
                             logger.error(
                                 f"Received {data_msg} but not in JSON format"
                             )
