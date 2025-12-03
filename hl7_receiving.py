@@ -37,9 +37,10 @@ def remove_mllp_framing_bytes(data: bytes) -> str:
     string:
           stripped hl7 message and decoded
     """
+    message = None
     if data.startswith(MLLP_START) and data.endswith(MLLP_END):
         data = data[1:-2]
-    message = data.decode('utf-8')
+    message = data.decode()
     return  message.replace('\n','\r')
 
 def wrap_with_mllp(message: str) -> bytes:
@@ -49,20 +50,74 @@ def wrap_with_mllp(message: str) -> bytes:
     return MLLP_START + message.encode("utf-8") + MLLP_END
 
 
-def write_to_file(data: str):
+def get_file_name(data: str):   
+    """
+    Parses a raw hl7 message and decodes it to get attributes (datetime of message and specimen ID)
+
+    Parameters
+    ----------
+    data : bytes
+        hl7 message received with framing bytes
+
+    Returns
+    ---------
+    strings:
+           datetime, specimen id and timestamp
+    """
+
+    if data.startswith(MLLP_START) and data.endswith(MLLP_END):
+        data = data[1:-2]
+    message = data.decode().replace('\n', '\r')
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    try:
+        m = parse_message(message, find_groups=False)
+    except Exception as e:
+        print(f"HL7 parse error in get_file_name(): {e}")
+        return "NO_DATETIME", "NO_SPECIMEN", timestamp
+
+    datetime_msg = m.msh.msh_7.value if m.msh.msh_7 else "NO_DATETIME"
+
+    # Get specimen ID from ORC field (location depends on order or result)
+    specimen = "NO_SPECIMEN"
+    specimen_id = None
+
+    if hasattr(m, "orc") and m.orc:
+        for orc_field in [m.orc.orc_2, m.orc.orc_3, m.orc.orc_4]:
+            # Check value explicitly against None (handles value == 0)
+            if orc_field is not None and orc_field.value is not None:
+                specimen_id = orc_field.value
+                break
+
+    # Normalize specimen
+    if specimen_id is not None:
+        specimen = str(specimen_id).split("^")[0]
+    else:
+        specimen = "NO_SPECIMEN"
+
+    return datetime_msg, specimen, timestamp
+
+
+def write_to_file(data: str, datetime_msg, specimen_id, time_stamp):
     """
     Save a hl7 message received into a txt file
 
     Parameters
     ----------
     data : string
-        hl7 message received
-    """
-    os.makedirs(response_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        hl7 message received with framing bytes
+    datetime_msg: string
+        date and time in the hl7 message
+    specimen_id: string
+        specimen ID in the hl7 message
+    time_stamp: string
+        date time at the moment the message is saved as a txt file
     
-    with open(str(response_dir) + f'/{timestamp}.txt', "w+") as f:
-        print(f'saving {timestamp} into directory {response_dir}')
+    """
+
+    with open(f"{response_dir}/{datetime_msg}_{specimen_id}_{time_stamp}.txt", "w+") as f:
+        print(f"Saving {datetime_msg}_{specimen_id}_{time_stamp} into directory {response_dir}")
         f.write(data)
 
 
@@ -83,9 +138,8 @@ def validate_message(data: str) -> bool:
        
     try:
         m = parse_message(data, find_groups=False)
-        required_segments = {'MSH', 'PID'}
+        required_segments = {'MSH', 'PID', 'ORC'}
         present_segments = {segment.name for segment in m.children}
-        
         return required_segments.issubset(present_segments)
     except Exception as e:
         print(f"Validation error: {e}")
@@ -202,32 +256,30 @@ async def handle_tcp_connection(
     print(f"Connection from {addr}")
 
     while True:
-        data = await reader.read(1024)
-
+        data = await reader.read(65536)
         if not data:
             break
 
-        message = data.decode()
+        datetime_msg, specimen, timestamp = get_file_name(data)
 
-        print(f"Received data: {message}")
+        hl7_msg_str = remove_mllp_framing_bytes(data)
+        hl7_msg = hl7_msg_str.replace('\r', '\n')
+        write_to_file(hl7_msg, datetime_msg, specimen, timestamp)
 
-                
-        if validate_message(message):
+        if validate_message(hl7_msg_str):
             print("HL7 message is valid")
-            ack_hl7 = ack_message_back(message)
-
+            ack_hl7 = ack_message_back(hl7_msg_str)
+            print(f'Message valid {ack_hl7}')
             if ack_hl7:
                 writer.write(wrap_with_mllp(ack_hl7))
                 await writer.drain()
         else:
-
             print("Invalid HL7 message: missing required segments")
-            error_ack = create_error_ack(message)
+            error_ack = create_error_ack(hl7_msg_str)
             if error_ack:
                 writer.write(wrap_with_mllp(error_ack))
                 await writer.drain()
 
-        write_to_file(data=message)
 
     print(f"Connection closed from {addr}")
     writer.close()
