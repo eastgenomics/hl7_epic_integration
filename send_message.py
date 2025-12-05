@@ -114,7 +114,7 @@ def wrap_with_mllp(message: str) -> str:
 
 
 def connect_and_send_message(data_to_send: bytes, port: int):
-    """Connect to local server and send the
+    """Connect to local server and send the message
 
     Parameters
     ----------
