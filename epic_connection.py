@@ -8,31 +8,11 @@ import sys
 import re
 import time
 
-import schedule
-
-import send_message
-
 # port for local communication with the send_message.py script
 LOCAL_PORT = 2000
 
 
 logger = logging.getLogger(__name__)
-
-
-def schedule_job(paths: list):
-    """Schedule jobs for sending messages
-
-    Parameters
-    ----------
-    paths : list
-        List of paths in which messages need to be scheduled
-    """
-
-    for i in range(8, 18, 1):
-        for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
-            getattr(schedule.every(), day).at(f"{i:02d}:00").do(
-                send_message.main, paths, LOCAL_PORT, True
-            )
 
 
 def connect_to_socket(
@@ -140,7 +120,7 @@ def main(host: str, port: int, paths: list):
         level=logging.DEBUG,
         format=(
             "%(asctime)s - %(levelname)7s - "
-            "%(filename)18s : %(funcName)20s() - "
+            "%(filename)18s : %(funcName)25s() - "
             "%(message)s"
         ),
     )
@@ -150,10 +130,6 @@ def main(host: str, port: int, paths: list):
     epic_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     epic_socket_holder = {"socket": connect_to_socket(epic_socket, host, port)}
     logger.info(f"Initial connection to {host}:{port}")
-
-    if paths:
-        logger.info("Starting scheduled jobs")
-        schedule_job(paths)
 
     # setup the local server
     local_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -168,7 +144,7 @@ def main(host: str, port: int, paths: list):
     while True:
         # allows for the while loop to not get stuck on the acceptance of
         # socket connection and allowing the scheduling to get triggered
-        readable, writable, errored = select.select(read_list, [], [], 60)
+        readable, writable, errored = select.select(read_list, [], [], 0)
 
         for s in readable:
             if s is local_server:
@@ -221,7 +197,8 @@ def main(host: str, port: int, paths: list):
                                 f"Received {data_msg} but not in JSON format"
                             )
                         else:
-                            conn.sendall("Received data".encode())
+                            conn.sendall("Data received".encode())
+                            logger.debug(json_data)
                             send_message_to_epic(
                                 epic_socket_holder, json_data, host, port
                             )
@@ -229,10 +206,6 @@ def main(host: str, port: int, paths: list):
                     size_data = 0
 
                 conn.close()
-
-        if schedule.get_jobs():
-            # run the scheduling
-            schedule.run_pending()
 
 
 if __name__ == "__main__":
