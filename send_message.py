@@ -54,7 +54,7 @@ def get_relevant_files(folder: PosixPath, test: bool) -> list:
     test : bool
         Bool to indicate the test mode
 
-    Yields
+    Returns
     ------
     list
         List of files to be parsed and sent
