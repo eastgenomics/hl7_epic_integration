@@ -97,9 +97,19 @@ def parse_hl7_file(filepath: PosixPath) -> str:
 
 
 def wrap_with_mllp(message: str) -> str:
+    """Wraps an HL7 message string with MLLP framing
+
+    Parameters
+    ----------
+    message : str
+        Message to wrap with MLLP characters
+
+    Returns
+    ------
+    str
+        Message wrapped with MLLP characters
     """
-    Wraps an HL7 message string with MLLP framing
-    """
+
     return MLLP_START + message + MLLP_END
 
 
