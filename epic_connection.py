@@ -212,7 +212,7 @@ def main(host: str, port: int):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("host", default="test")
+    parser.add_argument("host")
     parser.add_argument("port", type=int)
     args = parser.parse_args()
     main(args.host, args.port)
