@@ -4,11 +4,12 @@ import json
 import logging
 from pathlib import PosixPath, Path
 import socket
-import sys
+import time
 from typing import Optional
 
 import hl7apy
 from hl7apy.parser import parse_message
+import schedule
 
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,30 @@ logger = logging.getLogger(__name__)
 # MLLP framing characters
 MLLP_START = "\x0b"
 MLLP_END = "\x1c\r"
+
+
+def schedule_job(paths: list, port: int, test: bool):
+    """Schedule jobs for sending messages
+
+    Parameters
+    ----------
+    paths : list
+        List of paths in which messages need to be scheduled
+    port : int
+        Port number for local server
+    """
+
+    logger.info("Started job scheduling")
+
+    for i in range(8, 18, 1):
+        for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
+            getattr(schedule.every(), day).at(f"{i:02d}:00").do(
+                main, paths, port, test
+            )
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
 
 
 def get_relevant_files(folder: PosixPath, test: bool) -> list:
@@ -108,7 +133,30 @@ def wrap_with_mllp(message: str) -> str:
     return MLLP_START + message + MLLP_END
 
 
-def main(paths: list, port: int, test: bool):
+def connect_and_send_message(data_to_send: bytes, port: int):
+    """Connect to local server and send the
+
+    Parameters
+    ----------
+    data_to_send : bytes
+        JSON data in bytes
+    port : int
+        Number port for local server
+    """
+
+    # handle connect and sending of JSON data to local server
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect(("127.0.0.1", port))
+
+        s.sendall(f"Sending : {len(data_to_send)}".encode())
+        s.sendall(data_to_send)
+
+        received = s.recv(1024)
+        received = received.decode("utf-8")
+        logger.info(f"Received `{received}` from local server")
+
+
+def main(paths: list, port: int, test: bool, scheduling: bool = False):
     """Gather, parse and send parsed content to local server
 
     Parameters
@@ -127,12 +175,15 @@ def main(paths: list, port: int, test: bool):
         level=logging.DEBUG,
         format=(
             "%(asctime)s - %(levelname)7s - "
-            "%(filename)18s : %(funcName)20s() - "
+            "%(filename)18s : %(funcName)25s() - "
             "%(message)s"
         ),
     )
 
-    logger.info(f"Arguments used: {paths} | {port} | {test}")
+    logger.info(f"Arguments used: {paths} | {port} | {test} | {scheduling}")
+
+    if scheduling:
+        schedule_job(paths, port, test)
 
     list_paths = [p.name for p in paths]
 
@@ -161,16 +212,7 @@ def main(paths: list, port: int, test: bool):
 
     data_to_send = json.dumps(messages).encode()
 
-    # handle connect and sending of JSON data to local server
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect(("127.0.0.1", port))
-
-        s.sendall(f"Sending : {len(data_to_send)}".encode())
-        s.sendall(data_to_send)
-
-        received = s.recv(1024)
-        received = received.decode("utf-8")
-        logger.info(f"Received `{received}`")
+    connect_and_send_message(data_to_send, port)
 
 
 if __name__ == "__main__":
@@ -178,5 +220,6 @@ if __name__ == "__main__":
     parser.add_argument("hl7_message_path", nargs="+", type=Path)
     parser.add_argument("local_port", type=int)
     parser.add_argument("-t", "--test", action="store_true", default=False)
+    parser.add_argument("-s", "--schedule", action="store_true", default=False)
     args = parser.parse_args()
-    main(args.hl7_message_path, args.local_port, args.test)
+    main(args.hl7_message_path, args.local_port, args.test, args.schedule)
