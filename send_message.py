@@ -146,14 +146,18 @@ def connect_and_send_message(data_to_send: bytes, port: int):
 
     # handle connect and sending of JSON data to local server
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect(("127.0.0.1", port))
+        try:
+            s.connect(("127.0.0.1", port))
+        except Exception as e:
+            logger.exception(f"Failed connecting to 127.0.0.1:{port}")
+            raise e
+        else:
+            s.sendall(f"Sending : {len(data_to_send)}".encode())
+            s.sendall(data_to_send)
 
-        s.sendall(f"Sending : {len(data_to_send)}".encode())
-        s.sendall(data_to_send)
-
-        received = s.recv(1024)
-        received = received.decode("utf-8")
-        logger.info(f"Received `{received}` from local server")
+            received = s.recv(1024)
+            received = received.decode("utf-8")
+            logger.info(f"Received `{received}` from local server")
 
 
 def main(paths: list, port: int, test: bool, scheduling: bool = False):
