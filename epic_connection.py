@@ -1,7 +1,6 @@
 import argparse
 import json
 import logging
-from pathlib import Path
 import select
 import socket
 import sys
@@ -35,7 +34,12 @@ def connect_to_socket(
         Socket object
     """
 
-    sock.connect((host, port))
+    try:
+        sock.connect((host, port))
+    except Exception as e:
+        logger.exception(f"Failed connection to {host}:{port}")
+        raise e
+
     return sock
 
 
@@ -101,7 +105,7 @@ def send_message_to_epic(
             return
 
 
-def main(host: str, port: int, paths: list):
+def main(host: str, port: int):
     """Main function to connect to Epic, start the local server and if
     necessary start the scheduling of jobs
 
@@ -111,8 +115,6 @@ def main(host: str, port: int, paths: list):
         Host IP for Epic
     port : int
         Port for Epic
-    paths : list
-        Paths from which to start the scheduling from
     """
 
     logging.basicConfig(
@@ -212,6 +214,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("host", default="test")
     parser.add_argument("port", type=int)
-    parser.add_argument("-p", "--paths", nargs="+", type=Path)
     args = parser.parse_args()
-    main(args.host, args.port, args.paths)
+    main(args.host, args.port)
