@@ -5,10 +5,7 @@ import logging
 from pathlib import PosixPath, Path
 import socket
 import time
-from typing import Optional
 
-import hl7apy
-from hl7apy.parser import parse_message
 import schedule
 
 
@@ -96,34 +93,7 @@ def parse_hl7_file(filepath: PosixPath) -> str:
 
     with open(filepath) as f:
         message = f.read()
-        return message
-
-
-def str_to_er7_hl7_message(msg: str) -> Optional[str]:
-    """Parse a string message to a er7 formatted string. Skips files that fail
-    parsing by the HL7apy package
-
-    Parameters
-    ----------
-    msg : str
-        Message extracted from the file
-
-    Returns
-    -------
-    Optional[str]
-        Either the mllp format message or None if the content of the file is
-        not parsable
-    """
-
-    try:
-        msg = parse_message(msg, find_groups=False)
-        message = msg.to_er7()
-        message = message.replace("\n", "\r").strip()
-    except hl7apy.exceptions.ParserError:
-        logger.error(f"Error while trying to parse message: {msg}")
-        return
-    else:
-        return message
+        return "\r".join(message.split("\n"))
 
 
 def wrap_with_mllp(message: str) -> str:
@@ -208,11 +178,8 @@ def main(paths: list, port: int, test: bool, scheduling: bool = False):
 
     for file in files:
         msg = parse_hl7_file(file)
-        msg_er7 = str_to_er7_hl7_message(msg)
-
-        if msg_er7 is not None:
-            msg = wrap_with_mllp(msg_er7)
-            messages[f"{file.resolve()}"] = msg
+        msg = wrap_with_mllp(msg)
+        messages[f"{file.resolve()}"] = msg
 
     data_to_send = json.dumps(messages).encode()
 
