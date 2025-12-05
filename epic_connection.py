@@ -155,6 +155,8 @@ def main(host: str, port: int):
                 data_msg = ""
 
                 if data:
+                    # look for a message that contains a defined content for
+                    # getting the size of the subsequent data message
                     size_info = re.search(
                         r"(?P<sending>Sending : )(?P<size>[0-9]+)(?P<start_data>.*)",
                         data,
