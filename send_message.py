@@ -25,6 +25,8 @@ def schedule_job(paths: list, port: int, test: bool):
         List of paths in which messages need to be scheduled
     port : int
         Port number for local server
+    test : bool
+        Boolean to indicate whether to use test mode for gathering files
     """
 
     logger.info("Started job scheduling")
@@ -88,7 +90,8 @@ def parse_hl7_file(filepath: PosixPath) -> str:
     Returns
     -------
     str
-        Content of the file concatenated
+        Content of the file concatenated using carriage returns instead of
+        newlines
     """
 
     with open(filepath) as f:
@@ -152,6 +155,9 @@ def main(paths: list, port: int, test: bool, scheduling: bool = False):
     test : bool
         Boolean indicating whether to run the script in test mode i.e. does the
         script parse only files that have been here for the past hour
+    scheduling : bool
+        Boolean to indicate whether to start scheduling of messages.
+        Defaults to False
     """
 
     logging.basicConfig(
@@ -197,10 +203,49 @@ def main(paths: list, port: int, test: bool, scheduling: bool = False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("hl7_message_path", nargs="+", type=Path)
-    parser.add_argument("local_port", type=int)
-    parser.add_argument("-t", "--test", action="store_true", default=False)
-    parser.add_argument("-s", "--schedule", action="store_true", default=False)
+    parser = argparse.ArgumentParser(
+        description=(
+            "This script sends messages to a local server using the given "
+            "port. It can accomplish this using a schedule or sending one-off "
+            "messages."
+        )
+    )
+    parser.add_argument(
+        "hl7_message_path",
+        nargs="+",
+        type=Path,
+        help=(
+            "Path(s) in which messages will be located in or direct path(s) "
+            "to the messages themselves"
+        ),
+    )
+    parser.add_argument(
+        "local_port",
+        type=int,
+        help=(
+            "Local port to the local server as indicated in the "
+            "epic_connection.py script"
+        ),
+    )
+    parser.add_argument(
+        "-t",
+        "--test",
+        action="store_true",
+        default=False,
+        help=(
+            "Boolean to indicate to gather files from the last hour in the "
+            "given paths"
+        ),
+    )
+    parser.add_argument(
+        "-s",
+        "--schedule",
+        action="store_true",
+        default=False,
+        help=(
+            "Boolean to indicate whether to start sending messages on a "
+            "schedule"
+        ),
+    )
     args = parser.parse_args()
     main(args.hl7_message_path, args.local_port, args.test, args.schedule)
