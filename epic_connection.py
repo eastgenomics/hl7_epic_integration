@@ -142,6 +142,9 @@ def main(host: str, port: int):
     size_data = 0
 
     read_list = [local_server]
+    size_message_pattern = (
+        r"(?P<sending>Sending : )(?P<size>[0-9]+)(?P<start_data>.*)"
+    )
 
     while True:
         # allows for the while loop to not get stuck on the acceptance of
@@ -157,10 +160,7 @@ def main(host: str, port: int):
                 if data:
                     # look for a message that contains a defined content for
                     # getting the size of the subsequent data message
-                    size_info = re.search(
-                        r"(?P<sending>Sending : )(?P<size>[0-9]+)(?P<start_data>.*)",
-                        data,
-                    )
+                    size_info = re.search(size_message_pattern, data)
 
                     # Received message indicating the size of the next message
                     if size_info:
@@ -213,8 +213,16 @@ def main(host: str, port: int):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("host")
-    parser.add_argument("port", type=int)
+    parser = argparse.ArgumentParser(
+        description=(
+            "This script starts a connection using the given host and port. "
+            "It also starts a local server to receive messages using the 2000 "
+            "port."
+        )
+    )
+    parser.add_argument("host", help="Host to connect to")
+    parser.add_argument(
+        "port", type=int, help="Port to use to connect to the host"
+    )
     args = parser.parse_args()
     main(args.host, args.port)
