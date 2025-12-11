@@ -1,42 +1,70 @@
 import argparse
 import datetime
+import json
 import logging
 from pathlib import PosixPath, Path
 import socket
 import time
-from typing import Generator, Optional
-import hl7apy
-from hl7apy.parser import parse_message
+
 import schedule
 
-# MLLP framing characters
-MLLP_START = b"\x0b"
-MLLP_END = b"\x1c\r"
 
 logger = logging.getLogger(__name__)
 
+# MLLP framing characters
+MLLP_START = "\x0b"
+MLLP_END = "\x1c\r"
 
-def get_relevant_files(
-    folder: PosixPath, test: bool
-) -> Generator[PosixPath, None, None]:
+
+def schedule_job(paths: list, port: int, test: bool):
+    """Schedule jobs for sending messages
+
+    Parameters
+    ----------
+    paths : list
+        List of paths in which messages need to be scheduled
+    port : int
+        Port number for local server
+    test : bool
+        Boolean to indicate whether to use test mode for gathering files
+    """
+
+    logger.info("Started job scheduling")
+
+    for i in range(8, 18, 1):
+        for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
+            getattr(schedule.every(), day).at(f"{i:02d}:00").do(
+                main, paths, port, test
+            )
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+
+def get_relevant_files(folder: PosixPath, test: bool) -> list:
     """Get the relevant files for the HL7 process i.e. files that are less than
     an hour old
 
     Parameters
     ----------
     folder : PosixPath
-        Path containing the files to check
+        Path containing the files to check or representing a file
     test : bool
         Bool to indicate the test mode
 
-    Yields
+    Returns
     ------
-    Generator[PosixPath, None, None]
-        Generator for the files in the folder
-        (in case there are a lot of files)
+    list
+        List of files to be parsed and sent
     """
 
     TIME = datetime.datetime.now().timestamp()
+
+    files = []
+
+    if folder.is_file():
+        return [folder]
 
     for file in folder.iterdir():
         if file.is_file():
@@ -44,9 +72,11 @@ def get_relevant_files(
                 # get files that have been modified 1 hour ago at the
                 # latest
                 if TIME - int(file.stat().st_mtime) <= 3600:
-                    yield file
+                    files.append(file)
             else:
-                yield file
+                files.append(file)
+
+    return files
 
 
 def parse_hl7_file(filepath: PosixPath) -> str:
@@ -60,219 +90,162 @@ def parse_hl7_file(filepath: PosixPath) -> str:
     Returns
     -------
     str
-        Content of the file concatenated
+        Content of the file concatenated using carriage returns instead of
+        newlines
     """
 
     with open(filepath) as f:
         message = f.read()
-        return message
+        return "\r".join(message.split("\n"))
 
 
-def str_to_er7_hl7_message(msg: str) -> Optional[str]:
-    """Parse a string message to a er7 formatted string. Skips files that fail
-    parsing by the HL7apy package
+def wrap_with_mllp(message: str) -> str:
+    """Wraps an HL7 message string with MLLP framing
 
     Parameters
     ----------
-    msg : str
-        Message extracted from the file
+    message : str
+        Message to wrap with MLLP characters
 
     Returns
-    -------
-    Optional[str]
-        Either the mllp format message or None if the content of the file is
-        not parsable
+    ------
+    str
+        Message wrapped with MLLP characters
     """
 
-    try:
-        msg = parse_message(msg, find_groups=False)
-        message = msg.to_er7()
-        message = message.replace("\n", "\r").strip()
-    except hl7apy.exceptions.ParserError:
-        logger.error(f"Error while trying to parse message: {msg}")
-        return
-    else:
-        return message
+    return MLLP_START + message + MLLP_END
 
 
-def wrap_with_mllp(message: str) -> bytes:
-    """
-    Wraps an HL7 message string with MLLP framing and returns as bytes
-    """
-    return MLLP_START + message.encode("utf-8") + MLLP_END
-
-
-def schedule_job(
-    epic_socket: dict, paths: list, test: bool, host: str, port: int
-):
-    """Schedule jobs for sending messages
+def connect_and_send_message(data_to_send: bytes, port: int):
+    """Connect to local server and send the message
 
     Parameters
     ----------
-    epic_socket : dict
-        Dict holding the socket object
+    data_to_send : bytes
+        JSON data in bytes
+    port : int
+        Number port for local server
+    """
+
+    # handle connect and sending of JSON data to local server
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.connect(("127.0.0.1", port))
+        except Exception as e:
+            logger.exception(f"Failed connecting to 127.0.0.1:{port}")
+            raise e
+        else:
+            s.sendall(f"Sending : {len(data_to_send)}".encode())
+            s.sendall(data_to_send)
+
+            received = s.recv(1024)
+            received = received.decode("utf-8")
+            logger.info(f"Received `{received}` from local server")
+
+
+def main(paths: list, port: int, test: bool, scheduling: bool = False):
+    """Gather, parse and send parsed content to local server
+
+    Parameters
+    ----------
     paths : list
-        List of paths in which to look for files
+        List of paths to files or folders in which message files are present
+    port : int
+        Port of the local server
     test : bool
-        Bool to indicate whether test mode has been activated
-    host : str
-        String for the host to connect to
-    port : int
-        Port number
+        Boolean indicating whether to run the script in test mode i.e. does the
+        script parse only files that have been here for the past hour
+    scheduling : bool
+        Boolean to indicate whether to start scheduling of messages.
+        Defaults to False
     """
 
-    for i in range(8, 18, 1):
-        for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
-            getattr(schedule.every(), day).at(f"{i:02d}:00").do(
-                parse_and_send_message, epic_socket, paths, test, host, port
-            )
+    logging.basicConfig(
+        filename="hl7_sending_messages.log",
+        level=logging.DEBUG,
+        format=(
+            "%(asctime)s - %(levelname)7s - "
+            "%(filename)18s : %(funcName)25s() - "
+            "%(message)s"
+        ),
+    )
 
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    logger.info(f"Arguments used: {paths} | {port} | {test} | {scheduling}")
 
+    if scheduling:
+        schedule_job(paths, port, test)
 
-def connect_to_socket(
-    socket: socket.socket, host: str, port: int
-) -> socket.socket:
-    """Connect to the specified host and port
+    list_paths = [p.name for p in paths]
 
-    Parameters
-    ----------
-    socket : socket.socket
-        Socket object
-    host : str
-        String for the host to connect to
-    port : int
-        Port number
-
-    Returns
-    -------
-    socket.socket
-        Socket object
-    """
-
-    socket.connect((host, port))
-    return socket
-
-
-def parse_and_send_message(
-    epic_socket: dict, paths: list, test: bool, host: str, port: int
-) -> Optional[None]:
-    """Gather, parse and send messages to the host and receive ACK message back
-
-    Parameters
-    ----------
-    epic_socket : dict
-        Dict holding the socket object connected to the Epic integration engine
-    paths : list
-        List of paths in which to look for files
-    test : bool
-        Bool to indicate whether test mode has been activated
-    host : str
-        String for the host to connect to
-    port : int
-        Port number
-    """
-
-    logger.info(f"Gathering files from '{", ".join(paths)}'")
+    logger.info(f"Gathering files from '{", ".join(list_paths)}'")
 
     files = []
 
     for folder in paths:
-        for file in get_relevant_files(folder, test):
-            files.append(file)
+        files += get_relevant_files(folder, test)
+
+    if not files:
+        logger.info(f"No files found in '{", ".join(list_paths)}'.")
+        return
 
     messages = {}
 
-    logger.info(f"Parsing '{", ".join(files)}'")
+    logger.info(f"Parsing '{", ".join([f.name for f in files])}'")
 
     for file in files:
         msg = parse_hl7_file(file)
-        msg_er7 = str_to_er7_hl7_message(msg)
+        msg = wrap_with_mllp(msg)
+        messages[f"{file.resolve()}"] = msg
 
-        if msg_er7 is None:
-            continue
+    data_to_send = json.dumps(messages).encode()
 
-        hl7_msg = wrap_with_mllp(msg_er7)
-
-        if hl7_msg:
-            messages[file] = hl7_msg
-
-    logger.info("Trying to send messages")
-
-    for source, msg in messages.items():
-        attempt = 0
-        success = False
-        logger.info(f"Message from {source}")
-
-        # attempt to reconnect 5 times to the host if the connection is reset
-        # on their side
-        while attempt < 5:
-            try:
-                epic_socket["socket"].sendall(msg)
-                data = epic_socket["socket"].recv(1024)
-
-                if data:
-                    logger.info(f"Received ack message back: {data}")
-                else:
-                    logger.info("No ACK message received from Epic")
-
-                success = True
-                break
-
-            except BrokenPipeError:
-                attempt += 1
-                logger.error(
-                    (
-                        "Failed to send message (probably due to connection "
-                        "reset on Epic side. Attempting to reconnect...)"
-                    )
-                )
-                time.sleep(300)
-                new_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                epic_socket["socket"] = connect_to_socket(
-                    new_socket, host, port
-                )
-
-            except Exception as e:
-                logger.exception(f"Error when trying to send the message: {e}")
-                break
-
-        if success is False:
-            return
-
-
-def main(paths: list, host: str, port: int, test: bool, start_schedule: bool):
-    logging.basicConfig(
-        filename="hl7_sending_messages.log",
-        level=logging.DEBUG,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    )
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        socket_holder = {"socket": connect_to_socket(s, host, port)}
-
-        if start_schedule:
-            schedule_job(socket_holder, paths, test, host, port)
-        else:
-            parse_and_send_message(socket_holder, paths, test, host, port)
+    connect_and_send_message(data_to_send, port)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("hl7_message_path", nargs="+", type=Path)
-    parser.add_argument("host")
-    parser.add_argument("port", type=int)
-    parser.add_argument("-t", "--test", action="store_true", default=False)
+    parser = argparse.ArgumentParser(
+        description=(
+            "This script sends messages to a local server using the given "
+            "port. It can accomplish this using a schedule or sending one-off "
+            "messages."
+        )
+    )
     parser.add_argument(
-        "-s", "--start_schedule", action="store_true", default=False
+        "hl7_message_path",
+        nargs="+",
+        type=Path,
+        help=(
+            "Path(s) in which messages will be located in or direct path(s) "
+            "to the messages themselves"
+        ),
+    )
+    parser.add_argument(
+        "local_port",
+        type=int,
+        help=(
+            "Local port to the local server as indicated in the "
+            "epic_connection.py script"
+        ),
+    )
+    parser.add_argument(
+        "-t",
+        "--test",
+        action="store_true",
+        default=False,
+        help=(
+            "Boolean to indicate to gather files from the last hour in the "
+            "given paths"
+        ),
+    )
+    parser.add_argument(
+        "-s",
+        "--schedule",
+        action="store_true",
+        default=False,
+        help=(
+            "Boolean to indicate whether to start sending messages on a "
+            "schedule"
+        ),
     )
     args = parser.parse_args()
-    main(
-        args.hl7_message_path,
-        args.host,
-        args.port,
-        args.test,
-        args.start_schedule,
-    )
+    main(args.hl7_message_path, args.local_port, args.test, args.schedule)
