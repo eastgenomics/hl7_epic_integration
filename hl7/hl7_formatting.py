@@ -107,6 +107,7 @@ def format_segment(
         logger.exception(
             f"No {segment_to_change} segment present in the order message"
         )
+        raise Exception
     else:
         segments[segment_position] = "|".join(new_segment)
 
