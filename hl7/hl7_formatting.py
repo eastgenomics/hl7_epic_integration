@@ -93,7 +93,7 @@ def format_segment(
     new_segment = None
 
     for i, segment in enumerate(segments):
-        if segment.startswith(segment_to_change):
+        if segment.startswith(f"{segment_to_change}|"):
             if segment_position is not None:
                 logger.exception(
                     f"Multiple {segment_to_change} have been found"
@@ -140,6 +140,10 @@ def build_new_message(order_message: list, result_message: list) -> str:
     new_message.extend(order_message)
     new_message.extend(result_message)
     new_message = "\r".join(new_message)
+
+    if not new_message.endswith("\r"):
+        new_message += "\r"
+
     new_message = wrap_with_mllp(new_message)
 
     return new_message
