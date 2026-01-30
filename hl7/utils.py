@@ -5,8 +5,6 @@ import time
 
 import schedule
 
-from send_message import main
-
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +122,8 @@ def schedule_job(
     test : bool
         Boolean to indicate whether to use test mode for gathering files
     """
+
+    from send_message import main
 
     logger.info("Started job scheduling")
 
