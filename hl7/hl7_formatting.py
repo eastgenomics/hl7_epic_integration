@@ -98,6 +98,7 @@ def format_segment(
                 logger.exception(
                     f"Multiple {segment_to_change} have been found"
                 )
+                raise Exception
 
             segment_position = i
             new_segment = segment.split("|")
