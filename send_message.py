@@ -66,7 +66,7 @@ def main(
     relevant_hl7_segments = utils.grab_relevant_segments(order_message)
     result_message = utils.parse_hl7_file(result_message_path)
     msg_to_send = hl7_formatting.build_new_message(
-        relevant_hl7_segments, result_message, test
+        relevant_hl7_segments, result_message
     )
 
     message_origin[
