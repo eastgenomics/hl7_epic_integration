@@ -28,7 +28,7 @@ def create_msh(timestamp: str) -> str:
     return "|".join(
         [
             "MSH",
-            "^~\\&",
+            "^~\\&",  # need to escape the backslash
             "Genomics",
             "218",
             "Epic",
