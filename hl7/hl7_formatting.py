@@ -87,7 +87,7 @@ def format_segment(
     Returns
     -------
     list
-        _description_
+        List of segments modified by the change
     """
     segment_position = None
     new_segment = None
@@ -102,6 +102,14 @@ def format_segment(
 
             segment_position = i
             new_segment = segment.split("|")
+
+            if len(new_segment) < segment_count:
+                logger.exception(
+                    f"{new_segment} is not long enough to host the change: "
+                    f"{change} at {segment_to_change}-{segment_count}"
+                )
+                raise Exception
+
             new_segment[segment_count] = change
 
     if segment_position is None:
