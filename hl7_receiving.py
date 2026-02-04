@@ -5,7 +5,7 @@ from hl7apy.core import Message
 from hl7apy.parser import parse_message
 from hl7apy.consts import VALIDATION_LEVEL
 from contextlib import asynccontextmanager
-
+from hl7apy.exceptions import ParserError
 
 # TCP server configuration (port to listen to)
 TCP_HOST = "0.0.0.0"
@@ -38,7 +38,7 @@ def remove_mllp_framing_bytes(data: bytes) -> str:
         data = data[1:-2]
         message = data.decode("latin-1")
     else:
-        message = data
+        message = data.decode("latin-1")
     return  message.replace('\n','\r')
 
 def wrap_with_mllp(message: str) -> bytes:
@@ -48,7 +48,7 @@ def wrap_with_mllp(message: str) -> bytes:
     return MLLP_START + message.encode("utf-8") + MLLP_END
 
 
-def get_file_name(data: str):   
+def get_file_name(data: bytes):   
     """
     Parses a raw hl7 message and decodes it to get attributes (datetime of message and specimen ID)
 
@@ -71,13 +71,17 @@ def get_file_name(data: str):
 
     try:
         m = parse_message(message, find_groups=False)
-    except Exception as e:
+    except ParserError as e:
         print(f"HL7 parse error in get_file_name(): {e}")
-        return "NO_MESSAGE_TYPE", "NO_SPECIMEN", timestamp
+        return "NO_ID", "NO_SPECIMEN", "NO_MESSAGE_TYPE", "NO_TEST_TYPE", timestamp, "NO_ORDER_NUMBER"
     
     # Get order number (without container if possible)
-    order=m.msh.msh_10.value
-    order_number=order.split(".")[1]
+    order = m.msh.msh_10.value if m.msh.msh_10 else None
+    if order:
+        parts = order.split(".")
+        order_number = parts[1] if len(parts) > 1 else parts[0]
+    else:
+        order_number = "NO_ORDER_NUMBER"
 
     # Define if order or results messade
     message_type="NO_MESSAGE_TYPE"
@@ -91,7 +95,7 @@ def get_file_name(data: str):
     specimen = "NO_SPECIMEN"
 
     if hasattr(m, "orc") and m.orc:
-        if m.orc.orc_4 and m.orc.orc_4.valiue:
+        if m.orc.orc_4 and m.orc.orc_4.value:
             specimen_id = m.orc.orc_4.value
         else:
             specimen_id = None
@@ -108,9 +112,9 @@ def get_file_name(data: str):
         else:
             test = None
         
-        if "RARE" in test:
+        if test and "RARE" in test:
             test_type = "RDA"
-        elif "CEN" in test:
+        elif test and "CEN" in test:
             test_type = "CENNGS"
 
     # Get test type
@@ -208,7 +212,8 @@ def ack_message_back(original_message: str):
         # Create acknowledgment 
         ack.add_segment("MSA")
         ack.msa.msa_1 = "AA"
-        ack.msa.msa_2 = "Message Validation Passed"
+        ack.msa.msa_2 = msg.msh.msh_10.value
+        ack.msa.msa_3 = "Message Validation Passed"
 
         # Return the encoded ACK string
         return ack.to_er7()
@@ -250,7 +255,8 @@ def create_error_ack(original_message: str):
         # Create error acknowledgment
         ack.add_segment("MSA")
         ack.msa.msa_1 = "AE"
-        ack.msa.msa_2 = "Message validation failed: missing required segments"
+        ack.msa.msa_2 = msg.msh.msh_10.value
+        ack.msa.msa_3 = "Message validation failed: missing required segments"
         
         return ack.to_er7()
         
