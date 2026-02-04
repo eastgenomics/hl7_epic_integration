@@ -1,13 +1,9 @@
 from datetime import datetime
-from pathlib import Path
 from fastapi import FastAPI
-import os
 import asyncio
 from hl7apy.core import Message
 from hl7apy.parser import parse_message
-from hl7apy.core import Message
 from hl7apy.consts import VALIDATION_LEVEL
-from hl7apy.core import Message
 from contextlib import asynccontextmanager
 
 
@@ -40,7 +36,9 @@ def remove_mllp_framing_bytes(data: bytes) -> str:
     message = None
     if data.startswith(MLLP_START) and data.endswith(MLLP_END):
         data = data[1:-2]
-    message = data.decode()
+        message = data.decode("latin-1")
+    else:
+        message = data
     return  message.replace('\n','\r')
 
 def wrap_with_mllp(message: str) -> bytes:
@@ -67,39 +65,70 @@ def get_file_name(data: str):
 
     if data.startswith(MLLP_START) and data.endswith(MLLP_END):
         data = data[1:-2]
-    message = data.decode().replace('\n', '\r')
+    message = data.decode("latin-1").replace('\n', '\r')
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
 
     try:
         m = parse_message(message, find_groups=False)
     except Exception as e:
         print(f"HL7 parse error in get_file_name(): {e}")
-        return "NO_DATETIME", "NO_SPECIMEN", timestamp
+        return "NO_MESSAGE_TYPE", "NO_SPECIMEN", timestamp
+    
+    # Get order number (without container if possible)
+    order=m.msh.msh_10.value
+    order_number=order.split(".")[1]
 
-    datetime_msg = m.msh.msh_7.value if m.msh.msh_7 else "NO_DATETIME"
+    # Define if order or results messade
+    message_type="NO_MESSAGE_TYPE"
 
-    # Get specimen ID from ORC field (location depends on order or result)
+    if "ORM" in m.msh.msh_9.value:
+        message_type = "OR"
+    elif "ORU" in m.msh.msh_9.value:
+        message_type = "RE"
+
+    # Get specimen ID
     specimen = "NO_SPECIMEN"
-    specimen_id = None
 
     if hasattr(m, "orc") and m.orc:
-        for orc_field in [m.orc.orc_2, m.orc.orc_3, m.orc.orc_4]:
-            # Check value explicitly against None (handles value == 0)
-            if orc_field is not None and orc_field.value is not None:
-                specimen_id = orc_field.value
-                break
+        if m.orc.orc_4 and m.orc.orc_4.valiue:
+            specimen_id = m.orc.orc_4.value
+        else:
+            specimen_id = None
+        
+        if specimen_id:
+            specimen = specimen_id.split("^")[0]
 
-    # Normalize specimen
-    if specimen_id is not None:
-        specimen = str(specimen_id).split("^")[0]
-    else:
-        specimen = "NO_SPECIMEN"
+    # Get test type
+    test_type = "NO_TEST_TYPE"
 
-    return datetime_msg, specimen, timestamp
+    if hasattr(m, "obr") and m.obr:
+        if m.obr.obr_4 and m.obr.obr_4.value:
+            test = m.obr.obr_4.value
+        else:
+            test = None
+        
+        if "RARE" in test:
+            test_type = "RDA"
+        elif "CEN" in test:
+            test_type = "CENNGS"
+
+    # Get test type
+    message_id = "NO_ID"
+
+    if hasattr(m, "obr") and m.obr:
+        if m.obr.obr_2 and m.obr.obr_2.value:
+            message = m.obr.obr_2.value
+        else:
+            message = None
+        
+        if message:
+            message_id = message.split("^")[0]
+    
+    return message_id, specimen, message_type, test_type, timestamp, order_number
 
 
-def write_to_file(data: str, datetime_msg, specimen_id, time_stamp):
+def write_to_file(data: str, message_id, specimen, message_type, test_type, timestamp, order_number):
     """
     Save a hl7 message received into a txt file
 
@@ -116,8 +145,8 @@ def write_to_file(data: str, datetime_msg, specimen_id, time_stamp):
     
     """
 
-    with open(f"{response_dir}/{datetime_msg}_{specimen_id}_{time_stamp}.txt", "w+") as f:
-        print(f"Saving {datetime_msg}_{specimen_id}_{time_stamp} into directory {response_dir}")
+    with open(f"{response_dir}/{message_id}_{specimen}_{message_type}_{test_type}_{timestamp}_{order_number}.txt", "w+") as f:
+        print(f"Saving{message_id}_{specimen}_{message_type}_{test_type}_{timestamp}_{order_number} into directory {response_dir}")
         f.write(data)
 
 
@@ -174,12 +203,12 @@ def ack_message_back(original_message: str):
         ack.msh.msh_6 = msg.msh.msh_4.value
         ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
         ack.msh.msh_9 = 'ACK'
-        ack.msh.msh_10 = 'ACK12345'
+        ack.msh.msh_10 = msg.msh.msh_10.value
 
         # Create acknowledgment 
         ack.add_segment("MSA")
         ack.msa.msa_1 = "AA"
-        ack.msa.msa_2 = msg.msh.msh_10.value
+        ack.msa.msa_2 = "Message Validation Passed"
 
         # Return the encoded ACK string
         return ack.to_er7()
@@ -216,12 +245,12 @@ def create_error_ack(original_message: str):
         ack.msh.msh_6 = msg.msh.msh_4.value
         ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
         ack.msh.msh_9 = 'ACK'
-        ack.msh.msh_10 = 'ERR' + datetime.now().strftime("%Y%m%d%H%M%S")
+        ack.msh.msh_10 = msg.msh.msh_10.value
         
         # Create error acknowledgment
         ack.add_segment("MSA")
         ack.msa.msa_1 = "AE"
-        ack.msa.msa_3 = "Message validation failed: missing required segments"
+        ack.msa.msa_2 = "Message validation failed: missing required segments"
         
         return ack.to_er7()
         
@@ -260,11 +289,11 @@ async def handle_tcp_connection(
         if not data:
             break
 
-        datetime_msg, specimen, timestamp = get_file_name(data)
+        message_id, specimen, message_type, test_type, timestamp, order_number = get_file_name(data)
 
         hl7_msg_str = remove_mllp_framing_bytes(data)
         hl7_msg = hl7_msg_str.replace('\r', '\n')
-        write_to_file(hl7_msg, datetime_msg, specimen, timestamp)
+        write_to_file(hl7_msg, message_id, specimen, message_type, test_type, timestamp, order_number)
 
         if validate_message(hl7_msg_str):
             print("HL7 message is valid")
