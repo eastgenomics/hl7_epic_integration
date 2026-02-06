@@ -6,6 +6,7 @@ from hl7apy.parser import parse_message
 from hl7apy.consts import VALIDATION_LEVEL
 from contextlib import asynccontextmanager
 from hl7apy.exceptions import ParserError
+import re
 
 # TCP server configuration (port to listen to)
 TCP_HOST = "0.0.0.0"
@@ -17,6 +18,23 @@ MLLP_END = b'\x1c\r'
 
 # Directory to store HL7 messages
 response_dir = "./responses_dev"
+
+def _sanitise(value: str) -> str:
+    """
+    Strip path-unsafe characters from a filename component.
+
+    Parameters
+    ----------
+    value : string
+        path name
+
+    Returns
+    ---------
+    string
+        sanitised path name
+    """
+    """"""
+    return re.sub(r'[^A-Za-z0-9_\-]', '_', value)
 
 def remove_mllp_framing_bytes(data: bytes) -> str:
     """
@@ -46,7 +64,7 @@ def wrap_with_mllp(message: str) -> bytes:
     """
     Wraps an HL7 message string with MLLP framing and returns as bytes
     """
-    return MLLP_START + message.encode("utf-8") + MLLP_END
+    return MLLP_START + message.encode("latin-1") + MLLP_END
 
 
 def get_file_name(data: bytes):   
@@ -84,7 +102,7 @@ def get_file_name(data: bytes):
     else:
         order_number = "NO_ORDER_NUMBER"
 
-    # Define if order or results messade
+    # Define if order or results message
     message_type="NO_MESSAGE_TYPE"
 
     if "ORM" in m.msh.msh_9.value:
@@ -118,7 +136,7 @@ def get_file_name(data: bytes):
         elif test and "CEN" in test:
             test_type = "CENNGS"
 
-    # Get test type
+    # Get message ID
     message_id = "NO_ID"
 
     if hasattr(m, "obr") and m.obr:
@@ -141,17 +159,25 @@ def write_to_file(data: str, message_id, specimen, message_type, test_type, time
     ----------
     data : string
         hl7 message received with framing bytes
-    datetime_msg: string
-        date and time in the hl7 message
-    specimen_id: string
+    message_id: str
+        individual id in the message
+    specimen: string
         specimen ID in the hl7 message
-    time_stamp: string
+    message_type: str
+        order or result message
+    test_type: str
+        CENNGS or RDA   
+    timestamp: string
         date time at the moment the message is saved as a txt file
+    order_number: str
+        order number in the message header
     
     """
+    parts = [_sanitise(str(v)) for v in (message_id, specimen, message_type, test_type, timestamp, order_number)]
+    filename = "_".join(parts)
 
-    with open(f"{response_dir}/{message_id}_{specimen}_{message_type}_{test_type}_{timestamp}_{order_number}.txt", "w+") as f:
-        print(f"Saving{message_id}_{specimen}_{message_type}_{test_type}_{timestamp}_{order_number} into directory {response_dir}")
+    with open(f"{response_dir}/{filename}.txt", "w+") as f:
+        print(f"Saving {filename} into directory {response_dir}")
         f.write(data)
 
 
@@ -166,8 +192,7 @@ def validate_message(data: str) -> bool:
 
     Returns
     -------
-    bool: 
-        merged dataframe
+    bool : True or False
     """
        
     try:
@@ -207,9 +232,8 @@ def create_ack(original_message: str, valid: bool = True):
         ack.msh.msh_4 = msg.msh.msh_6.value
         ack.msh.msh_5 = msg.msh.msh_3.value
         ack.msh.msh_6 = msg.msh.msh_4.value
-        ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
         ack.msh.msh_9 = "ACK"
-        ack.msh.msh_10 = msg.msh.msh_10.value
+        ack.msh.msh_10 = f"ACK-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
         # MSA segment
         ack.add_segment("MSA")
