@@ -7,6 +7,8 @@ from hl7apy.consts import VALIDATION_LEVEL
 from contextlib import asynccontextmanager
 from hl7apy.exceptions import ParserError
 import re
+import os
+
 
 # TCP server configuration (port to listen to)
 TCP_HOST = "0.0.0.0"
@@ -18,6 +20,7 @@ MLLP_END = b'\x1c\r'
 
 # Directory to store HL7 messages
 response_dir = "./responses_dev"
+os.makedirs(response_dir, exist_ok=True)
 
 def _sanitise(value: str) -> str:
     """
@@ -222,7 +225,7 @@ def create_ack(original_message: str, valid: bool = True):
     """
 
     try:
-        msg = parse_message(original_message)
+        msg = parse_message(original_message, find_groups=False)
 
         ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
 
@@ -286,7 +289,11 @@ async def handle_tcp_connection(
 
         hl7_msg_str = remove_mllp_framing_bytes(data)
         hl7_msg = hl7_msg_str.replace('\r', '\n')
-        write_to_file(hl7_msg, message_id, specimen, message_type, test_type, timestamp, order_number)
+
+        try:
+            write_to_file(hl7_msg, message_id, specimen, message_type, test_type, timestamp, order_number)
+        except OSError as e:
+            print(f"Failed to write message to file: {e}")
         
         if validate_message(hl7_msg_str):
             print("HL7 message is valid")
