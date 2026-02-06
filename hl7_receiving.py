@@ -34,12 +34,13 @@ def remove_mllp_framing_bytes(data: bytes) -> str:
           stripped hl7 message and decoded
     """
     message = None
+
     if data.startswith(MLLP_START) and data.endswith(MLLP_END):
         data = data[1:-2]
-        message = data.decode("latin-1")
-    else:
-        message = data.decode("latin-1")
-    return  message.replace('\n','\r')
+
+    message = data.decode("latin-1")
+    return message.replace('\n', '\r')
+
 
 def wrap_with_mllp(message: str) -> bytes:
     """
@@ -178,91 +179,54 @@ def validate_message(data: str) -> bool:
         print(f"Validation error: {e}")
         return False
             
-
-def ack_message_back(original_message: str):
+    
+def create_ack(original_message: str, valid: bool = True):
     """
-    Create an hl7 message as an ACK from the original hl7 message received 
+    Create an HL7 ACK message (success or error)
 
     Parameters
     ----------
-    original_message : string
-        hl7 message received
+    original_message : str
+        HL7 message received
+    valid : bool
+        True for AA (success), False for AE (error)
 
     Returns
     -------
-    str:
+    str
         HL7 ACK message in ER7 format
     """
-       
+
     try:
-       
         msg = parse_message(original_message)
-        
+
         ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
 
-        # Populate the MSH segment
-        ack.msh.msh_3 = msg.msh.msh_5.value  # Swap sender/receiver
+        # Populate MSH segment (swap sender/receiver)
+        ack.msh.msh_3 = msg.msh.msh_5.value
         ack.msh.msh_4 = msg.msh.msh_6.value
         ack.msh.msh_5 = msg.msh.msh_3.value
         ack.msh.msh_6 = msg.msh.msh_4.value
         ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
-        ack.msh.msh_9 = 'ACK'
+        ack.msh.msh_9 = "ACK"
         ack.msh.msh_10 = msg.msh.msh_10.value
 
-        # Create acknowledgment 
+        # MSA segment
         ack.add_segment("MSA")
-        ack.msa.msa_1 = "AA"
+        ack.msa.msa_1 = "AA" if valid else "AE"
         ack.msa.msa_2 = msg.msh.msh_10.value
-        ack.msa.msa_3 = "Message Validation Passed"
 
-        # Return the encoded ACK string
+        if valid:
+            ack.msa.msa_3 = "Message Validation Passed"
+        else:
+            ack.msa.msa_3 = "Message validation failed: missing required segments"
+
         return ack.to_er7()
 
     except Exception as e:
         print(f"Error generating ACK: {e}")
         return None
-    
-def create_error_ack(original_message: str):
-    """
-    Create an HL7 error ACK message for invalid messages
-    
-    Parameters
-    ----------
-    original_message : str
-        Original HL7 message that failed validation
-        
-    Returns
-    -------
-    str
-        HL7 error ACK message in ER7 format
-    """
 
-    try:
-
-        msg = parse_message(original_message)
-        
-        ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
-        
-        # Populate MSH segment
-        ack.msh.msh_3 = msg.msh.msh_5.value  # Swap sender/receiver
-        ack.msh.msh_4 = msg.msh.msh_6.value
-        ack.msh.msh_5 = msg.msh.msh_3.value
-        ack.msh.msh_6 = msg.msh.msh_4.value
-        ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
-        ack.msh.msh_9 = 'ACK'
-        ack.msh.msh_10 = msg.msh.msh_10.value
-        
-        # Create error acknowledgment
-        ack.add_segment("MSA")
-        ack.msa.msa_1 = "AE"
-        ack.msa.msa_2 = msg.msh.msh_10.value
-        ack.msa.msa_3 = "Message validation failed: missing required segments"
-        
-        return ack.to_er7()
-        
-    except Exception as e:
-        print(f"Error generating error ACK: {e}")
-        return None
     
 
 async def handle_tcp_connection(
@@ -300,20 +264,21 @@ async def handle_tcp_connection(
         hl7_msg_str = remove_mllp_framing_bytes(data)
         hl7_msg = hl7_msg_str.replace('\r', '\n')
         write_to_file(hl7_msg, message_id, specimen, message_type, test_type, timestamp, order_number)
-
+        
         if validate_message(hl7_msg_str):
             print("HL7 message is valid")
-            ack_hl7 = ack_message_back(hl7_msg_str)
-            print(f'Message valid {ack_hl7}')
-            if ack_hl7:
-                writer.write(wrap_with_mllp(ack_hl7))
-                await writer.drain()
+            ack_hl7 = create_ack(hl7_msg_str, valid=True)
         else:
             print("Invalid HL7 message: missing required segments")
-            error_ack = create_error_ack(hl7_msg_str)
-            if error_ack:
-                writer.write(wrap_with_mllp(error_ack))
-                await writer.drain()
+            ack_hl7 = create_ack(
+                hl7_msg_str,
+                valid=False,
+            )
+
+        if ack_hl7:
+            writer.write(wrap_with_mllp(ack_hl7))
+            await writer.drain()
+
 
 
     print(f"Connection closed from {addr}")
