@@ -78,7 +78,7 @@ def get_file_name(data: bytes):
     Returns
     ---------
     strings:
-           datetime, specimen id and timestamp
+           message_id, specimen, message_type, test_type, timestamp, order_number
     """
 
     if data.startswith(MLLP_START) and data.endswith(MLLP_END):
