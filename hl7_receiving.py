@@ -189,7 +189,7 @@ def create_ack(original_message: str, valid: bool = True):
     original_message : str
         HL7 message received
     valid : bool
-        True for AA (success), False for AE (error)
+        True for valid message (AA), False for message not valid (AE)
 
     Returns
     -------
