@@ -33,7 +33,6 @@ def _sanitise(value: str) -> str:
     string
         sanitised path name
     """
-    """"""
     return re.sub(r'[^A-Za-z0-9_\-]', '_', value)
 
 def remove_mllp_framing_bytes(data: bytes) -> str:
