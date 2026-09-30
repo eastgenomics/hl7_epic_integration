@@ -1,0 +1,52 @@
+# Service receiving HL7 messages from Epic over TCP (MLLP) on port 20480,
+# with a HTTP status check on port 8000
+#
+# The server this runs on has restricted internet access, so the image is
+# built on a machine with internet access and copied over:
+#
+#   1. On a machine with internet access, build and save the image:
+#        docker compose build
+#        docker save hl7_receiving:1.0.0 | gzip > hl7_receiving_1.0.0.tar.gz
+#
+#   2. Copy hl7_receiving_1.0.0.tar.gz and this file to the server, then
+#      load the image and start the service:
+#        docker load < hl7_receiving_1.0.0.tar.gz
+#        mkdir -p responses logs
+#        docker compose up -d
+#
+#      responses/ and logs/ must be created before the first start, and
+#      belong to UID 1000 (the user the container runs as), otherwise the
+#      container can't write to them
+#
+# To release a new version, change the version in `image` below and repeat
+# both steps. To roll back, change it back to a version still loaded on the
+# server and run `docker compose up -d`
+#
+# The messages received are saved in ./responses and the logs in ./logs,
+# next to this file
+
+services:
+  hl7_receiving:
+    image: hl7_receiving:1.0.0
+    build: .
+    # the server is x86-64, so build for it even on a different machine
+    # (e.g. an Apple Silicon Mac)
+    platform: linux/amd64
+    # never try to pull the image, it is loaded from the saved file
+    pull_policy: never
+    container_name: hl7_receiving
+    restart: unless-stopped
+    ports:
+      # HL7 messages (TCP)
+      - "20480:20480"
+      # status check (HTTP)
+      - "8000:8000"
+    volumes:
+      - ./responses:/app/responses
+      - ./logs:/app/logs
+    # limit the size of the output kept by `docker logs`
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

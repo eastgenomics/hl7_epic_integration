@@ -8,7 +8,9 @@ service can be checked over HTTP, e.g. `uvicorn hl7_receiving:app`
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -17,6 +19,10 @@ from hl7 import mllp, receiving
 
 logger = logging.getLogger(__name__)
 
+# file to log to, can be set with the LOG_FILE environment variable
+LOG_FILE = Path(os.environ.get("LOG_FILE", "hl7_receiving_messages.log"))
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.DEBUG,
     format=(
@@ -24,9 +30,10 @@ logging.basicConfig(
         "%(filename)18s : %(funcName)25s() - "
         "%(message)s"
     ),
-    # log to file and to the console
+    # log to file, starting a new file when it reaches 10 MB and keeping the
+    # last 5 files
     handlers=[
-        logging.FileHandler("hl7_receiving_messages.log"),
+        RotatingFileHandler(LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5),
     ],
 )
 
@@ -37,8 +44,9 @@ TCP_PORT = 20480
 # maximum size of a single message, in bytes
 MAX_MESSAGE_SIZE = 16 * 1024 * 1024
 
-# directory to store the HL7 messages received
-RESPONSE_DIR = Path("./responses_dev")
+# directory to store the HL7 messages received, can be set with the
+# RESPONSE_DIR environment variable
+RESPONSE_DIR = Path(os.environ.get("RESPONSE_DIR", "./responses_dev"))
 
 
 def process_message(data: bytes) -> str | None:
@@ -143,24 +151,41 @@ async def handle_tcp_connection(
     await writer.wait_closed()
 
 
-async def start_tcp_server():
-    """Start the TCP server listening for incoming HL7 messages"""
+async def start_tcp_server() -> asyncio.Server:
+    """Start the TCP server listening for incoming HL7 messages
 
-    server = await asyncio.start_server(
-        handle_tcp_connection,
-        host=TCP_HOST,
-        port=TCP_PORT,
-        limit=MAX_MESSAGE_SIZE,
-    )
+    Returns
+    -------
+    asyncio.Server
+        TCP server listening on TCP_HOST:TCP_PORT
+
+    Raises
+    ------
+    OSError
+        Raised if the TCP server can't listen on the port, e.g. if the port
+        is already in use
+    """
+
+    try:
+        server = await asyncio.start_server(
+            handle_tcp_connection,
+            host=TCP_HOST,
+            port=TCP_PORT,
+            limit=MAX_MESSAGE_SIZE,
+        )
+    except OSError:
+        logger.exception(f"TCP server couldn't listen on {TCP_HOST}:{TCP_PORT}")
+        raise
+
     logger.info(f"TCP server listening on {TCP_HOST}:{TCP_PORT}")
 
-    async with server:
-        await server.serve_forever()
+    return server
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Run the TCP server in the background while the FastAPI app runs
+    """Run the TCP server in the background while the FastAPI app runs.
+    If the TCP server can't start, the app doesn't start either.
 
     Parameters
     ----------
@@ -170,7 +195,10 @@ async def lifespan(app: FastAPI):
 
     RESPONSE_DIR.mkdir(parents=True, exist_ok=True)
 
-    task = asyncio.create_task(start_tcp_server())
+    # start listening before the app starts so that a failure stops the app
+    # instead of leaving the status check reporting that everything is fine
+    server = await start_tcp_server()
+    task = asyncio.create_task(server.serve_forever())
 
     # FastAPI app runs here
     yield
@@ -181,7 +209,11 @@ async def lifespan(app: FastAPI):
     try:
         await task
     except asyncio.CancelledError:
-        logger.info("TCP server stopped")
+        pass
+
+    server.close()
+    await server.wait_closed()
+    logger.info("TCP server stopped")
 
 
 app = FastAPI(lifespan=lifespan)

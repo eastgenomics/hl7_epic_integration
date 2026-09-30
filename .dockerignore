@@ -1,0 +1,15 @@
+# only the receiving code and requirements are needed in the image
+.git
+.gitignore
+.claude
+.mcp.json
+.dockerignore
+Dockerfile
+**/__pycache__
+*.pyc
+*.log
+messages
+responses*
+logs
+merged
+results_msg
