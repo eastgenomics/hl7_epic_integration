@@ -7,14 +7,13 @@ service can be checked over HTTP, e.g. `uvicorn hl7_receiving:app`
 """
 
 import asyncio
-from contextlib import asynccontextmanager
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 
 from hl7 import mllp, receiving
-
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,6 @@ logging.basicConfig(
     # log to file and to the console
     handlers=[
         logging.FileHandler("hl7_receiving_messages.log"),
-        logging.StreamHandler(),
     ],
 )
 
@@ -66,7 +64,9 @@ def process_message(data: bytes) -> str | None:
 
     # save every message received, even the invalid ones
     datetime_msg, specimen, timestamp = receiving.get_message_details(message)
-    receiving.save_message(message_str, RESPONSE_DIR, datetime_msg, specimen, timestamp)
+    receiving.save_message(
+        message_str, RESPONSE_DIR, datetime_msg, specimen, timestamp
+    )
 
     if message is None:
         ack_code, error_text = "AR", "Message could not be parsed"
@@ -130,7 +130,9 @@ async def handle_tcp_connection(
                     await writer.drain()
                     logger.info(f"Sent ACK to {addr}")
                 except ConnectionError:
-                    logger.warning(f"Couldn't send ACK, {addr} closed the connection")
+                    logger.warning(
+                        f"Couldn't send ACK, {addr} closed the connection"
+                    )
                     break
 
         if connection_closed:
