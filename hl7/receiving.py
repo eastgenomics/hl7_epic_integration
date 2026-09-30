@@ -6,6 +6,7 @@ received from Epic
 from datetime import datetime
 import logging
 from pathlib import Path
+import uuid
 
 from hl7apy.consts import VALIDATION_LEVEL
 from hl7apy.core import Message
@@ -81,7 +82,9 @@ def save_message(
     message: str, output_dir: Path, datetime_msg: str, specimen: str, timestamp: str
 ) -> Path:
     """Save a HL7 message received into a txt file named
-    "{datetime_msg}_{specimen}_{timestamp}.txt"
+    "{datetime_msg}_{specimen}_{timestamp}.txt". If that file already
+    exists, a number is added to the name e.g.
+    "{datetime_msg}_{specimen}_{timestamp}_1.txt"
 
     Parameters
     ----------
@@ -102,7 +105,16 @@ def save_message(
         Path to the file the message was saved in
     """
 
-    output_file = output_dir / f"{datetime_msg}_{specimen}_{timestamp}.txt"
+    file_name = f"{datetime_msg}_{specimen}_{timestamp}"
+    output_file = output_dir / f"{file_name}.txt"
+
+    # don't overwrite a message with the same details received in the same
+    # second (e.g. a message resent by Epic), add a number to the name instead
+    counter = 1
+
+    while output_file.exists():
+        output_file = output_dir / f"{file_name}_{counter}.txt"
+        counter += 1
 
     # save segments on separate lines to make the file readable
     output_file.write_text(message.replace("\r", "\n"))
@@ -138,17 +150,54 @@ def validate_message(message: Message | None) -> bool:
     return True
 
 
-def create_ack(message: Message | None, valid: bool) -> str | None:
-    """Create the ACK message to send back for a HL7 message received.
-    A valid message gets an "AA" (accepted) ACK and an invalid message
-    gets an "AE" (error) ACK.
+def get_msh_fields(message: str) -> dict:
+    """Get the MSH fields needed to create an ACK directly from the raw
+    message, so that an ACK can be sent even if the message couldn't be
+    parsed
 
     Parameters
     ----------
-    message : Message | None
-        Parsed HL7 message, or None if the message couldn't be parsed
-    valid : bool
-        Whether the message received is valid
+    message : str
+        HL7 message with segments separated by carriage returns
+
+    Returns
+    -------
+    dict
+        MSH-3 to MSH-6 (sending/receiving application and facility) and
+        MSH-10 (message control ID). Empty dict if the message has no MSH
+        segment.
+    """
+
+    msh_segment = next(
+        (segment for segment in message.split("\r") if segment.startswith("MSH")),
+        None,
+    )
+
+    if msh_segment is None:
+        return {}
+
+    # the field separator is the character right after "MSH". Once split,
+    # MSH-1 is the separator itself so MSH-n is at index n - 1
+    fields = msh_segment.split(msh_segment[3])
+
+    return {
+        f"msh_{n}": fields[n - 1]
+        for n in (3, 4, 5, 6, 10)
+        if len(fields) > n - 1 and fields[n - 1]
+    }
+
+
+def create_ack(message: str, ack_code: str, error_text: str = None) -> str | None:
+    """Create the ACK message to send back for a HL7 message received
+
+    Parameters
+    ----------
+    message : str
+        HL7 message received with segments separated by carriage returns
+    ack_code : str
+        "AA" (accepted), "AE" (error) or "AR" (rejected)
+    error_text : str, optional
+        Reason for the error, added to MSA-3 for "AE" and "AR" ACKs
 
     Returns
     -------
@@ -156,34 +205,37 @@ def create_ack(message: Message | None, valid: bool) -> str | None:
         ACK message in ER7 format, or None if it couldn't be created
     """
 
-    if message is None:
-        logger.error("No ACK can be created for a message that couldn't be parsed")
-        return None
+    msh_fields = get_msh_fields(message)
 
-    now = datetime.now().strftime("%Y%m%d%H%M%S")
+    # swap sender and receiver of the original message
+    swapped_fields = {
+        "msh_3": "msh_5",
+        "msh_4": "msh_6",
+        "msh_5": "msh_3",
+        "msh_6": "msh_4",
+    }
 
     try:
         ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
 
-        # swap sender and receiver of the original message
-        ack.msh.msh_3 = message.msh.msh_5.value
-        ack.msh.msh_4 = message.msh.msh_6.value
-        ack.msh.msh_5 = message.msh.msh_3.value
-        ack.msh.msh_6 = message.msh.msh_4.value
-        ack.msh.msh_7 = now
+        for ack_field, original_field in swapped_fields.items():
+            if original_field in msh_fields:
+                setattr(ack.msh, ack_field, msh_fields[original_field])
+
+        ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
         ack.msh.msh_9 = "ACK"
+        # unique control ID for each ACK (max 20 characters)
+        ack.msh.msh_10 = uuid.uuid4().hex[:20]
 
         ack.add_segment("MSA")
+        ack.msa.msa_1 = ack_code
 
-        if valid:
-            ack.msh.msh_10 = "ACK12345"
-            ack.msa.msa_1 = "AA"
-            # control ID of the message being acknowledged
-            ack.msa.msa_2 = message.msh.msh_10.value
-        else:
-            ack.msh.msh_10 = f"ERR{now}"
-            ack.msa.msa_1 = "AE"
-            ack.msa.msa_3 = "Message validation failed: missing required segments"
+        # control ID of the message being acknowledged
+        if "msh_10" in msh_fields:
+            ack.msa.msa_2 = msh_fields["msh_10"]
+
+        if error_text:
+            ack.msa.msa_3 = error_text
 
         return ack.to_er7()
 

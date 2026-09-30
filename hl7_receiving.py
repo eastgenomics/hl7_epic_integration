@@ -19,21 +19,66 @@ from hl7 import mllp, receiving
 logger = logging.getLogger(__name__)
 
 logging.basicConfig(
-    filename="hl7_receiving_messages.log",
     level=logging.DEBUG,
     format=(
         "%(asctime)s - %(levelname)7s - "
         "%(filename)18s : %(funcName)25s() - "
         "%(message)s"
     ),
+    # log to file and to the console
+    handlers=[
+        logging.FileHandler("hl7_receiving_messages.log"),
+        logging.StreamHandler(),
+    ],
 )
 
 # TCP server configuration (host and port to listen to)
 TCP_HOST = "0.0.0.0"
 TCP_PORT = 20480
 
+# maximum size of a single message, in bytes
+MAX_MESSAGE_SIZE = 16 * 1024 * 1024
+
 # directory to store the HL7 messages received
 RESPONSE_DIR = Path("./responses_dev")
+
+
+def process_message(data: bytes) -> str | None:
+    """Save and validate a HL7 message received, and create the ACK to
+    send back for it:
+    - "AA" (accepted) if the message is valid
+    - "AE" (error) if the message is missing required segments
+    - "AR" (rejected) if the message couldn't be parsed
+
+    Parameters
+    ----------
+    data : bytes
+        HL7 message received, with or without MLLP framing bytes
+
+    Returns
+    -------
+    str | None
+        ACK message in ER7 format, or None if it couldn't be created
+    """
+
+    message_str = mllp.remove_mllp_framing(data)
+    message = receiving.parse_hl7_message(message_str)
+
+    # save every message received, even the invalid ones
+    datetime_msg, specimen, timestamp = receiving.get_message_details(message)
+    receiving.save_message(message_str, RESPONSE_DIR, datetime_msg, specimen, timestamp)
+
+    if message is None:
+        ack_code, error_text = "AR", "Message could not be parsed"
+    elif not receiving.validate_message(message):
+        ack_code = "AE"
+        error_text = "Message validation failed: missing required segments"
+    else:
+        ack_code, error_text = "AA", None
+
+    logger.info(f"Message for specimen {specimen} gets {ack_code} ACK")
+
+    return receiving.create_ack(message_str, ack_code, error_text)
 
 
 async def handle_tcp_connection(
@@ -42,8 +87,9 @@ async def handle_tcp_connection(
     """Handle an incoming TCP connection and process the HL7 messages
     received through it until the client closes the connection.
 
-    Every message received is saved to file, then validated. An "AA" ACK
-    is sent back for valid messages and an "AE" ACK for invalid ones.
+    Messages are read one at a time up to the MLLP end bytes, so a message
+    split over several TCP packets, or several messages sent at once, are
+    handled correctly.
 
     Parameters
     ----------
@@ -57,32 +103,38 @@ async def handle_tcp_connection(
     logger.info(f"Connection from {addr}")
 
     while True:
-        data = await reader.read(65536)
+        # set when the client closes the connection
+        connection_closed = False
 
-        if not data:
-            # client closed the connection
+        try:
+            data = await reader.readuntil(mllp.MLLP_END)
+        except asyncio.IncompleteReadError as e:
+            # connection closed, process anything received without the
+            # MLLP end bytes
+            data = e.partial
+            connection_closed = True
+        except asyncio.LimitOverrunError:
+            logger.error(
+                f"Message from {addr} is bigger than {MAX_MESSAGE_SIZE} bytes, "
+                "closing connection"
+            )
             break
 
-        logger.info(f"Received {len(data)} bytes from {addr}")
+        if data.strip():
+            logger.info(f"Received {len(data)} bytes from {addr}")
+            ack = process_message(data)
 
-        message_str = mllp.remove_mllp_framing(data)
-        message = receiving.parse_hl7_message(message_str)
+            if ack:
+                try:
+                    writer.write(mllp.wrap_with_mllp(ack))
+                    await writer.drain()
+                    logger.info(f"Sent ACK to {addr}")
+                except ConnectionError:
+                    logger.warning(f"Couldn't send ACK, {addr} closed the connection")
+                    break
 
-        # save every message received, even the invalid ones
-        datetime_msg, specimen, timestamp = receiving.get_message_details(message)
-        receiving.save_message(
-            message_str, RESPONSE_DIR, datetime_msg, specimen, timestamp
-        )
-
-        valid = receiving.validate_message(message)
-        logger.info(f"Message for specimen {specimen} is {'valid' if valid else 'invalid'}")
-
-        ack = receiving.create_ack(message, valid)
-
-        if ack:
-            writer.write(mllp.wrap_with_mllp(ack))
-            await writer.drain()
-            logger.info(f"Sent {'AA' if valid else 'AE'} ACK to {addr}")
+        if connection_closed:
+            break
 
     logger.info(f"Connection closed from {addr}")
     writer.close()
@@ -93,7 +145,10 @@ async def start_tcp_server():
     """Start the TCP server listening for incoming HL7 messages"""
 
     server = await asyncio.start_server(
-        handle_tcp_connection, host=TCP_HOST, port=TCP_PORT
+        handle_tcp_connection,
+        host=TCP_HOST,
+        port=TCP_PORT,
+        limit=MAX_MESSAGE_SIZE,
     )
     logger.info(f"TCP server listening on {TCP_HOST}:{TCP_PORT}")
 

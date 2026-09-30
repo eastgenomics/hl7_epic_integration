@@ -23,9 +23,13 @@ def remove_mllp_framing(data: bytes) -> str:
         Decoded HL7 message with segments separated by carriage returns
     """
 
-    # only strip the framing if the message is fully framed
-    if data.startswith(MLLP_START) and data.endswith(MLLP_END):
-        data = data[len(MLLP_START) : -len(MLLP_END)]
+    # drop the start byte and anything sent before it (e.g. a newline left
+    # between two messages)
+    if MLLP_START in data:
+        data = data[data.index(MLLP_START) + len(MLLP_START) :]
+
+    if data.endswith(MLLP_END):
+        data = data[: -len(MLLP_END)]
 
     # HL7 segments are separated by carriage returns
     return data.decode().replace("\n", "\r")
