@@ -1,325 +1,143 @@
-from datetime import datetime
-from pathlib import Path
-from fastapi import FastAPI
-import os
+"""
+Receive HL7 messages from Epic over TCP (MLLP), save them to file and send
+back an ACK message.
+
+A FastAPI app runs alongside the TCP server so that the status of the
+service can be checked over HTTP, e.g. `uvicorn hl7_receiving:app`
+"""
+
 import asyncio
-from hl7apy.core import Message
-from hl7apy.parser import parse_message
-from hl7apy.core import Message
-from hl7apy.consts import VALIDATION_LEVEL
-from hl7apy.core import Message
 from contextlib import asynccontextmanager
+import logging
+from pathlib import Path
+
+from fastapi import FastAPI
+
+from hl7 import mllp, receiving
 
 
-# TCP server configuration (port to listen to)
+logger = logging.getLogger(__name__)
+
+logging.basicConfig(
+    filename="hl7_receiving_messages.log",
+    level=logging.DEBUG,
+    format=(
+        "%(asctime)s - %(levelname)7s - "
+        "%(filename)18s : %(funcName)25s() - "
+        "%(message)s"
+    ),
+)
+
+# TCP server configuration (host and port to listen to)
 TCP_HOST = "0.0.0.0"
 TCP_PORT = 20480
 
-# MLLP framing characters 
-MLLP_START = b'\x0b'
-MLLP_END = b'\x1c\r'
+# directory to store the HL7 messages received
+RESPONSE_DIR = Path("./responses_dev")
 
-# Directory to store HL7 messages
-response_dir = "./responses_dev"
-
-def remove_mllp_framing_bytes(data: bytes) -> str:
-    """
-    Adds or removes MLLP protocol framing start and end bytes from
-    an HL7 message and decodes it
-
-    Parameters
-    ----------
-    data : bytes
-        hl7 message received with framing bytes
-
-    Returns
-    ---------
-    string:
-          stripped hl7 message and decoded
-    """
-    message = None
-    if data.startswith(MLLP_START) and data.endswith(MLLP_END):
-        data = data[1:-2]
-    message = data.decode()
-    return  message.replace('\n','\r')
-
-def wrap_with_mllp(message: str) -> bytes:
-    """
-    Wraps an HL7 message string with MLLP framing and returns as bytes
-    """
-    return MLLP_START + message.encode("utf-8") + MLLP_END
-
-
-def get_file_name(data: str):   
-    """
-    Parses a raw hl7 message and decodes it to get attributes (datetime of message and specimen ID)
-
-    Parameters
-    ----------
-    data : bytes
-        hl7 message received with framing bytes
-
-    Returns
-    ---------
-    strings:
-           datetime, specimen id and timestamp
-    """
-
-    if data.startswith(MLLP_START) and data.endswith(MLLP_END):
-        data = data[1:-2]
-    message = data.decode().replace('\n', '\r')
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    try:
-        m = parse_message(message, find_groups=False)
-    except Exception as e:
-        print(f"HL7 parse error in get_file_name(): {e}")
-        return "NO_DATETIME", "NO_SPECIMEN", timestamp
-
-    datetime_msg = m.msh.msh_7.value if m.msh.msh_7 else "NO_DATETIME"
-
-    # Get specimen ID from ORC field (location depends on order or result)
-    specimen = "NO_SPECIMEN"
-    specimen_id = None
-
-    if hasattr(m, "orc") and m.orc:
-        for orc_field in [m.orc.orc_2, m.orc.orc_3, m.orc.orc_4]:
-            # Check value explicitly against None (handles value == 0)
-            if orc_field is not None and orc_field.value is not None:
-                specimen_id = orc_field.value
-                break
-
-    # Normalize specimen
-    if specimen_id is not None:
-        specimen = str(specimen_id).split("^")[0]
-    else:
-        specimen = "NO_SPECIMEN"
-
-    return datetime_msg, specimen, timestamp
-
-
-def write_to_file(data: str, datetime_msg, specimen_id, time_stamp):
-    """
-    Save a hl7 message received into a txt file
-
-    Parameters
-    ----------
-    data : string
-        hl7 message received with framing bytes
-    datetime_msg: string
-        date and time in the hl7 message
-    specimen_id: string
-        specimen ID in the hl7 message
-    time_stamp: string
-        date time at the moment the message is saved as a txt file
-    
-    """
-
-    with open(f"{response_dir}/{datetime_msg}_{specimen_id}_{time_stamp}.txt", "w+") as f:
-        print(f"Saving {datetime_msg}_{specimen_id}_{time_stamp} into directory {response_dir}")
-        f.write(data)
-
-
-def validate_message(data: str) -> bool:
-    """
-    Validate a hl7 message received by checking it has the required segments
-
-    Parameters
-    ----------
-    data : string
-        hl7 message received
-
-    Returns
-    -------
-    bool: 
-        merged dataframe
-    """
-       
-    try:
-        m = parse_message(data, find_groups=False)
-        required_segments = {'MSH', 'PID', 'ORC'}
-        present_segments = {segment.name for segment in m.children}
-        return required_segments.issubset(present_segments)
-    except Exception as e:
-        print(f"Validation error: {e}")
-        return False
-            
-
-def ack_message_back(original_message: str):
-    """
-    Create an hl7 message as an ACK from the original hl7 message received 
-
-    Parameters
-    ----------
-    original_message : string
-        hl7 message received
-
-    Returns
-    -------
-    str:
-        HL7 ACK message in ER7 format
-    """
-       
-    try:
-       
-        msg = parse_message(original_message)
-        
-        ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
-
-        # Populate the MSH segment
-        ack.msh.msh_3 = msg.msh.msh_5.value  # Swap sender/receiver
-        ack.msh.msh_4 = msg.msh.msh_6.value
-        ack.msh.msh_5 = msg.msh.msh_3.value
-        ack.msh.msh_6 = msg.msh.msh_4.value
-        ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
-        ack.msh.msh_9 = 'ACK'
-        ack.msh.msh_10 = 'ACK12345'
-
-        # Create acknowledgment 
-        ack.add_segment("MSA")
-        ack.msa.msa_1 = "AA"
-        ack.msa.msa_2 = msg.msh.msh_10.value
-
-        # Return the encoded ACK string
-        return ack.to_er7()
-
-    except Exception as e:
-        print(f"Error generating ACK: {e}")
-        return None
-    
-def create_error_ack(original_message: str):
-    """
-    Create an HL7 error ACK message for invalid messages
-    
-    Parameters
-    ----------
-    original_message : str
-        Original HL7 message that failed validation
-        
-    Returns
-    -------
-    str
-        HL7 error ACK message in ER7 format
-    """
-
-    try:
-
-        msg = parse_message(original_message)
-        
-        ack = Message("ACK", validation_level=VALIDATION_LEVEL.STRICT)
-        
-        # Populate MSH segment
-        ack.msh.msh_3 = msg.msh.msh_5.value  # Swap sender/receiver
-        ack.msh.msh_4 = msg.msh.msh_6.value
-        ack.msh.msh_5 = msg.msh.msh_3.value
-        ack.msh.msh_6 = msg.msh.msh_4.value
-        ack.msh.msh_7 = datetime.now().strftime("%Y%m%d%H%M%S")
-        ack.msh.msh_9 = 'ACK'
-        ack.msh.msh_10 = 'ERR' + datetime.now().strftime("%Y%m%d%H%M%S")
-        
-        # Create error acknowledgment
-        ack.add_segment("MSA")
-        ack.msa.msa_1 = "AE"
-        ack.msa.msa_3 = "Message validation failed: missing required segments"
-        
-        return ack.to_er7()
-        
-    except Exception as e:
-        print(f"Error generating error ACK: {e}")
-        return None
-    
 
 async def handle_tcp_connection(
-    reader: asyncio.StreamReader,
-    writer: asyncio.StreamWriter
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
 ):
- 
-    """
-    Handles an incoming TCP connection and processes HL7 messages.
+    """Handle an incoming TCP connection and process the HL7 messages
+    received through it until the client closes the connection.
 
-    Reads data from the client over TCP.
-    Validates the HL7 message.
-    Sends back an HL7 ACK message if the input is valid.
-    Logs invalid messages and saves all incoming messages to file.
+    Every message received is saved to file, then validated. An "AA" ACK
+    is sent back for valid messages and an "AE" ACK for invalid ones.
 
     Parameters
     ----------
     reader : asyncio.StreamReader
-        Stream reader for the TCP connection.
-
+        Stream reader for the TCP connection
     writer : asyncio.StreamWriter
-        Stream writer for the TCP connection.
+        Stream writer for the TCP connection
     """
 
     addr = writer.get_extra_info("peername")
-    print(f"Connection from {addr}")
+    logger.info(f"Connection from {addr}")
 
     while True:
         data = await reader.read(65536)
+
         if not data:
+            # client closed the connection
             break
 
-        datetime_msg, specimen, timestamp = get_file_name(data)
+        logger.info(f"Received {len(data)} bytes from {addr}")
 
-        hl7_msg_str = remove_mllp_framing_bytes(data)
-        hl7_msg = hl7_msg_str.replace('\r', '\n')
-        write_to_file(hl7_msg, datetime_msg, specimen, timestamp)
+        message_str = mllp.remove_mllp_framing(data)
+        message = receiving.parse_hl7_message(message_str)
 
-        if validate_message(hl7_msg_str):
-            print("HL7 message is valid")
-            ack_hl7 = ack_message_back(hl7_msg_str)
-            print(f'Message valid {ack_hl7}')
-            if ack_hl7:
-                writer.write(wrap_with_mllp(ack_hl7))
-                await writer.drain()
-        else:
-            print("Invalid HL7 message: missing required segments")
-            error_ack = create_error_ack(hl7_msg_str)
-            if error_ack:
-                writer.write(wrap_with_mllp(error_ack))
-                await writer.drain()
+        # save every message received, even the invalid ones
+        datetime_msg, specimen, timestamp = receiving.get_message_details(message)
+        receiving.save_message(
+            message_str, RESPONSE_DIR, datetime_msg, specimen, timestamp
+        )
 
+        valid = receiving.validate_message(message)
+        logger.info(f"Message for specimen {specimen} is {'valid' if valid else 'invalid'}")
 
-    print(f"Connection closed from {addr}")
+        ack = receiving.create_ack(message, valid)
+
+        if ack:
+            writer.write(mllp.wrap_with_mllp(ack))
+            await writer.drain()
+            logger.info(f"Sent {'AA' if valid else 'AE'} ACK to {addr}")
+
+    logger.info(f"Connection closed from {addr}")
     writer.close()
     await writer.wait_closed()
 
-# Start the TCP server to listen for incoming HL7 messages.
+
 async def start_tcp_server():
+    """Start the TCP server listening for incoming HL7 messages"""
 
     server = await asyncio.start_server(
-        handle_tcp_connection,
-        host=TCP_HOST,
-        port=TCP_PORT,
+        handle_tcp_connection, host=TCP_HOST, port=TCP_PORT
     )
-    print(f"TCP server listening on {TCP_HOST}:{TCP_PORT}")
+    logger.info(f"TCP server listening on {TCP_HOST}:{TCP_PORT}")
+
     async with server:
         await server.serve_forever()
 
-# FastAPI app and TCP server running together
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Run the TCP server in the background while the FastAPI app runs
+
+    Parameters
+    ----------
+    app : FastAPI
+        FastAPI app
+    """
+
+    RESPONSE_DIR.mkdir(parents=True, exist_ok=True)
 
     task = asyncio.create_task(start_tcp_server())
-    
-    yield # fastapi will run it
+
+    # FastAPI app runs here
+    yield
+
+    # stop the TCP server when the FastAPI app shuts down
+    task.cancel()
 
     try:
         await task
     except asyncio.CancelledError:
-        print("TCP server not running")
+        logger.info("TCP server stopped")
+
 
 app = FastAPI(lifespan=lifespan)
 
-# Endpoint for HTTP connection
+
 @app.get("/")
 async def read_root() -> dict:
-    """
+    """HTTP endpoint to check the status of the service
+
     Returns
     -------
-    dict:
-        message with the server status
+    dict
+        Message with the server status
     """
 
     return {"message": "HTTP server is running alongside TCP listener"}
