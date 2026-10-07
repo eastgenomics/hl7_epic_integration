@@ -7,6 +7,7 @@ service can be checked over HTTP, e.g. `uvicorn hl7_receiving:app`
 """
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,6 +15,10 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from hl7 import mllp, receiving
+
+CONFIG = json.loads(
+    (Path(__file__).parent / "configs" / "hl7_receiving.json").read_text()
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +31,19 @@ logging.basicConfig(
     ),
     # log to file and to the console
     handlers=[
-        logging.FileHandler("hl7_receiving_messages.log"),
+        logging.FileHandler(CONFIG["log_file"]),
     ],
 )
 
 # TCP server configuration (host and port to listen to)
-TCP_HOST = "0.0.0.0"
-TCP_PORT = 20480
+TCP_HOST = CONFIG["tcp_host"]
+TCP_PORT = CONFIG["tcp_port"]
 
 # maximum size of a single message, in bytes
-MAX_MESSAGE_SIZE = 16 * 1024 * 1024
+MAX_MESSAGE_SIZE = CONFIG["max_message_size"]
 
 # directory to store the HL7 messages received
-RESPONSE_DIR = Path("./received_messages")
+RESPONSE_DIR = Path(CONFIG["response_dir"])
 
 
 def process_message(data: bytes) -> str | None:
