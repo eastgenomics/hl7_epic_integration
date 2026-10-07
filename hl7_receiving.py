@@ -38,7 +38,7 @@ TCP_PORT = 20480
 MAX_MESSAGE_SIZE = 16 * 1024 * 1024
 
 # directory to store the HL7 messages received
-RESPONSE_DIR = Path("./responses_dev")
+RESPONSE_DIR = Path("./received_messages")
 
 
 def process_message(data: bytes) -> str | None:
@@ -63,9 +63,9 @@ def process_message(data: bytes) -> str | None:
     message = receiving.parse_hl7_message(message_str)
 
     # save every message received, even the invalid ones
-    datetime_msg, specimen, timestamp = receiving.get_message_details(message)
+    datetime_msg, sample_id, timestamp = receiving.get_message_details(message)
     receiving.save_message(
-        message_str, RESPONSE_DIR, datetime_msg, specimen, timestamp
+        message_str, RESPONSE_DIR, datetime_msg, sample_id, timestamp
     )
 
     if message is None:
@@ -76,7 +76,7 @@ def process_message(data: bytes) -> str | None:
     else:
         ack_code, error_text = "AA", None
 
-    logger.info(f"Message for specimen {specimen} gets {ack_code} ACK")
+    logger.info(f"Message for sample {sample_id} gets {ack_code} ACK")
 
     return receiving.create_ack(message_str, ack_code, error_text)
 
