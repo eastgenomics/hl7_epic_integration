@@ -3,15 +3,14 @@ Functions to parse, validate, save and acknowledge the HL7 messages
 received from Epic
 """
 
-from datetime import datetime
 import logging
-from pathlib import Path
 import uuid
+from datetime import datetime
+from pathlib import Path
 
 from hl7apy.consts import VALIDATION_LEVEL
 from hl7apy.core import Message
 from hl7apy.parser import parse_message
-
 
 logger = logging.getLogger(__name__)
 
@@ -59,32 +58,40 @@ def get_message_details(message: Message | None) -> tuple:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if message is None:
-        return "NO_DATETIME", "NO_SPECIMEN", timestamp
+        return "NO_DATETIME", "NO_SAMPLE_ID", timestamp
 
-    datetime_msg = message.msh.msh_7.value if message.msh.msh_7 else "NO_DATETIME"
+    datetime_msg = (
+        message.msh.msh_7.value if message.msh.msh_7 else "NO_DATETIME"
+    )
 
-    specimen = "NO_SPECIMEN"
+    specimen = ""
+    instrument_id = ""
 
-    # the specimen ID field depends on whether the message is an order or
-    # a result, so take the first ORC field that has a value
     if hasattr(message, "orc") and message.orc:
-        for orc_field in [message.orc.orc_2, message.orc.orc_3, message.orc.orc_4]:
-            # check value explicitly against None (handles value == 0)
-            if orc_field is not None and orc_field.value is not None:
-                # only keep the ID, not the other components of the field
-                specimen = str(orc_field.value).split("^")[0]
-                break
+        specimen = str(message.orc.orc_4.value).split("-")[-1]
 
-    return datetime_msg, specimen, timestamp
+    if hasattr(message, "zsp"):
+        instrument_id = str(message.zsp.zsp_2.value)
+
+    if all([specimen, instrument_id]):
+        sample_id = f"{instrument_id}-{specimen}"
+    else:
+        sample_id = ""
+
+    return datetime_msg, sample_id, timestamp
 
 
 def save_message(
-    message: str, output_dir: Path, datetime_msg: str, specimen: str, timestamp: str
+    message: str,
+    output_dir: Path,
+    datetime_msg: str,
+    sample_id: str,
+    timestamp: str,
 ) -> Path:
     """Save a HL7 message received into a txt file named
-    "{datetime_msg}_{specimen}_{timestamp}.txt". If that file already
+    "{datetime_msg}_{sample_id}_{timestamp}.txt". If that file already
     exists, a number is added to the name e.g.
-    "{datetime_msg}_{specimen}_{timestamp}_1.txt"
+    "{datetime_msg}_{sample_id}_{timestamp}_1.txt"
 
     Parameters
     ----------
@@ -94,8 +101,8 @@ def save_message(
         Directory to save the message in
     datetime_msg : str
         Datetime in the HL7 message
-    specimen : str
-        Specimen ID in the HL7 message
+    sample_id : str
+        Sample ID extracted from info in the HL7 message
     timestamp : str
         Datetime at which the message was received
 
@@ -105,7 +112,7 @@ def save_message(
         Path to the file the message was saved in
     """
 
-    file_name = f"{datetime_msg}_{specimen}_{timestamp}"
+    file_name = f"{datetime_msg}_{sample_id}_{timestamp}"
     output_file = output_dir / f"{file_name}.txt"
 
     # don't overwrite a message with the same details received in the same
@@ -144,7 +151,9 @@ def validate_message(message: Message | None) -> bool:
     missing_segments = REQUIRED_SEGMENTS - present_segments
 
     if missing_segments:
-        logger.warning(f"Message is missing segments: {sorted(missing_segments)}")
+        logger.warning(
+            f"Message is missing segments: {sorted(missing_segments)}"
+        )
         return False
 
     return True
@@ -169,7 +178,11 @@ def get_msh_fields(message: str) -> dict:
     """
 
     msh_segment = next(
-        (segment for segment in message.split("\r") if segment.startswith("MSH")),
+        (
+            segment
+            for segment in message.split("\r")
+            if segment.startswith("MSH")
+        ),
         None,
     )
 
@@ -187,7 +200,9 @@ def get_msh_fields(message: str) -> dict:
     }
 
 
-def create_ack(message: str, ack_code: str, error_text: str = None) -> str | None:
+def create_ack(
+    message: str, ack_code: str, error_text: str = None
+) -> str | None:
     """Create the ACK message to send back for a HL7 message received
 
     Parameters
