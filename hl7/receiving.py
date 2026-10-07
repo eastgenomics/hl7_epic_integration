@@ -55,10 +55,8 @@ def get_message_details(message: Message | None) -> tuple:
         "NO_DATETIME" and "NO_SPECIMEN" are used for missing values.
     """
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
     if message is None:
-        return "NO_DATETIME", "NO_SAMPLE_ID", timestamp
+        return "NO_DATETIME", "NO_SAMPLE_ID"
 
     datetime_msg = (
         message.msh.msh_7.value if message.msh.msh_7 else "NO_DATETIME"
@@ -68,7 +66,7 @@ def get_message_details(message: Message | None) -> tuple:
     instrument_id = ""
 
     if hasattr(message, "orc") and message.orc:
-        specimen = str(message.orc.orc_4.value).split("-")[-1]
+        specimen = str(message.orc.orc_4.value).split("^")[0].split("-")[-1]
 
     if hasattr(message, "zsp"):
         instrument_id = str(message.zsp.zsp_2.value)
@@ -78,7 +76,7 @@ def get_message_details(message: Message | None) -> tuple:
     else:
         sample_id = ""
 
-    return datetime_msg, sample_id, timestamp
+    return datetime_msg, sample_id
 
 
 def save_message(
@@ -86,7 +84,6 @@ def save_message(
     output_dir: Path,
     datetime_msg: str,
     sample_id: str,
-    timestamp: str,
 ) -> Path:
     """Save a HL7 message received into a txt file named
     "{datetime_msg}_{sample_id}_{timestamp}.txt". If that file already
@@ -103,8 +100,6 @@ def save_message(
         Datetime in the HL7 message
     sample_id : str
         Sample ID extracted from info in the HL7 message
-    timestamp : str
-        Datetime at which the message was received
 
     Returns
     -------
@@ -112,7 +107,7 @@ def save_message(
         Path to the file the message was saved in
     """
 
-    file_name = f"{datetime_msg}_{sample_id}_{timestamp}"
+    file_name = f"{datetime_msg}_{sample_id}"
     output_file = output_dir / f"{file_name}.txt"
 
     # don't overwrite a message with the same details received in the same
