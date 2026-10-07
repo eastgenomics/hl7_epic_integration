@@ -68,8 +68,12 @@ def process_message(data: bytes) -> str | None:
     message = receiving.parse_hl7_message(message_str)
 
     # save every message received, even the invalid ones
-    datetime_msg, sample_id = receiving.get_message_details(message)
-    receiving.save_message(message_str, RESPONSE_DIR, datetime_msg, sample_id)
+    datetime_msg, sample_id, message_type = receiving.get_message_details(
+        message
+    )
+    receiving.save_message(
+        message_str, RESPONSE_DIR, datetime_msg, sample_id, message_type
+    )
 
     if message is None:
         ack_code, error_text = "AR", "Message could not be parsed"

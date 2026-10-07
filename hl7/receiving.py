@@ -50,8 +50,8 @@ def get_message_details(message: Message | None) -> tuple:
     Returns
     -------
     tuple
-        Datetime of the message (MSH-7), specimen ID (first ORC-2, ORC-3
-        or ORC-4 field with a value) and the current timestamp.
+        Datetime of the message (MSH-7), sample id (created from the instrument id
+        and the specimen id) and the message type.
         "NO_DATETIME" and "NO_SPECIMEN" are used for missing values.
     """
 
@@ -62,21 +62,25 @@ def get_message_details(message: Message | None) -> tuple:
         message.msh.msh_7.value if message.msh.msh_7 else "NO_DATETIME"
     )
 
-    specimen = ""
+    message_type = ""
     instrument_id = ""
+    specimen = ""
 
-    if hasattr(message, "orc") and message.orc:
-        specimen = str(message.orc.orc_4.value).split("^")[0].split("-")[-1]
+    if hasattr(message, "msh"):
+        message_type = message.msh.msh_9.value
 
     if hasattr(message, "zsp"):
         instrument_id = str(message.zsp.zsp_2.value)
+
+    if hasattr(message, "orc") and message.orc:
+        specimen = str(message.orc.orc_4.value).split("^")[0].split("-")[-1]
 
     if all([specimen, instrument_id]):
         sample_id = f"{instrument_id}-{specimen}"
     else:
         sample_id = ""
 
-    return datetime_msg, sample_id
+    return datetime_msg, sample_id, message_type
 
 
 def save_message(
@@ -84,11 +88,12 @@ def save_message(
     output_dir: Path,
     datetime_msg: str,
     sample_id: str,
+    message_type: str,
 ) -> Path:
     """Save a HL7 message received into a txt file named
-    "{datetime_msg}_{sample_id}_{timestamp}.txt". If that file already
+    "{datetime_msg}_{sample_id}_{message_type}.txt". If that file already
     exists, a number is added to the name e.g.
-    "{datetime_msg}_{sample_id}_{timestamp}_1.txt"
+    "{datetime_msg}_{sample_id}_{message_type}_1.txt"
 
     Parameters
     ----------
@@ -100,6 +105,8 @@ def save_message(
         Datetime in the HL7 message
     sample_id : str
         Sample ID extracted from info in the HL7 message
+    message_type : str
+        Message type in the HL7 message
 
     Returns
     -------
@@ -107,7 +114,7 @@ def save_message(
         Path to the file the message was saved in
     """
 
-    file_name = f"{datetime_msg}_{sample_id}"
+    file_name = f"{datetime_msg}_{sample_id}_{message_type}"
     output_file = output_dir / f"{file_name}.txt"
 
     # don't overwrite a message with the same details received in the same
