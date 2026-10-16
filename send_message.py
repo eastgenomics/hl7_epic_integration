@@ -73,7 +73,7 @@ def main(
         (f"{order_message_path.resolve()} + {result_message_path.resolve()}")
     ] = msg_to_send
 
-    data_to_send = json.dumps(msg_to_send).encode()
+    data_to_send = json.dumps(message_origin).encode()
 
     if not test:
         network.connect_and_send_message(data_to_send, port)

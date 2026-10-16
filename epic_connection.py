@@ -139,12 +139,8 @@ def main(host: str, port: int):
     local_server.listen(1)
     logger.info("Started local server")
 
-    size_data = 0
-
     read_list = [local_server]
-    size_message_pattern = (
-        r"(?P<sending>Sending : )(?P<size>[0-9]+)(?P<start_data>.*)"
-    )
+    size_message_pattern = r"Sending : (?P<size>[0-9]+)"
 
     while True:
         # allows for the while loop to not get stuck on the acceptance of
@@ -154,29 +150,33 @@ def main(host: str, port: int):
         for s in readable:
             if s is local_server:
                 conn, _ = local_server.accept()
-                data = conn.recv(1024).decode().strip()
-                data_msg = ""
+                received = b""
 
-                if data:
-                    # look for a message that contains a defined content for
-                    # getting the size of the subsequent data message
-                    size_info = re.search(size_message_pattern, data)
+                # the size message ends with a newline. The data can arrive in
+                # the same chunk as the size message, so keep receiving until
+                # the newline is found
+                while b"\n" not in received:
+                    data_chunk = conn.recv(1024)
 
-                    # Received message indicating the size of the next message
-                    if size_info:
-                        size_data = int(size_info.group("size"))
-                        logger.debug(
-                            f"Data will be {size_data} bytes of length"
-                        )
-                        conn.sendall("Received size data".encode())
-                        # actual data is mixed in with the size of data
-                        # message, so extract the bytes with the actual start
-                        # of the message and add it to the final result
-                        data_msg += size_info.group("start_data")
+                    if not data_chunk:
+                        break
 
-                    bytes_received = len(data_msg.encode())
+                    received += data_chunk
 
-                    while size_data > bytes_received:
+                size_message, _, data_msg = received.partition(b"\n")
+
+                # look for a message that contains a defined content for
+                # getting the size of the subsequent data message
+                size_info = re.fullmatch(
+                    size_message_pattern, size_message.decode()
+                )
+
+                if size_info:
+                    size_data = int(size_info.group("size"))
+                    logger.debug(f"Data will be {size_data} bytes of length")
+                    conn.sendall("Received size data".encode())
+
+                    while size_data > len(data_msg):
                         # while there is data left in the next message,
                         # continue receiving data
                         data_chunk = conn.recv(1024)
@@ -184,19 +184,18 @@ def main(host: str, port: int):
                         if not data_chunk:
                             break
 
-                        data_msg += data_chunk.decode()
-                        bytes_received += len(data_chunk)
+                        data_msg += data_chunk
 
-                    if len(data_msg.encode()) != size_data:
+                    if len(data_msg) != size_data:
                         logger.error(
                             "Length of data received doesn't match size "
                             "information received ahead of time: "
-                            f"{len(data_msg.encode())} != {size_data}"
+                            f"{len(data_msg)} != {size_data}"
                         )
                     else:
                         try:
-                            json_data = json.loads(data_msg)
-                        except json.JSONDecodeError:
+                            json_data = json.loads(data_msg.decode())
+                        except (json.JSONDecodeError, UnicodeDecodeError):
                             logger.exception(
                                 f"Received {data_msg} but not in JSON format"
                             )
@@ -207,7 +206,10 @@ def main(host: str, port: int):
                                 epic_socket_holder, json_data, host, port
                             )
 
-                    size_data = 0
+                elif received:
+                    logger.error(
+                        f"Received {received} without a valid size message"
+                    )
 
                 conn.close()
 
